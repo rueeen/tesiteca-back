@@ -16,7 +16,11 @@ class Tesis(models.Model):
     palabras_clave = models.CharField(max_length=500, blank=True)
     tipo = models.CharField(
         max_length=30,
-        choices=[(x, x) for x in ["TESIS", "PROYECTO_TITULO", "INFORME_PRACTICA"]],
+        choices=[
+            ("TESIS", "Tesis"),
+            ("PROYECTO_TITULO", "Proyecto de título"),
+            ("INFORME_PRACTICA", "Informe de práctica"),
+        ],
     )
     anio = models.PositiveIntegerField()
     semestre = models.PositiveSmallIntegerField(

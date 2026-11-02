@@ -140,6 +140,19 @@ class VerificarCodigo(APIView):
         )
 
 
+def error_legible(detalle, campo=""):
+    if isinstance(detalle, dict):
+        return "; ".join(
+            error_legible(valor, clave if clave != "non_field_errors" else "")
+            for clave, valor in detalle.items()
+        )
+    if isinstance(detalle, (list, tuple)):
+        mensajes = "; ".join(error_legible(valor) for valor in detalle)
+    else:
+        mensajes = str(detalle)
+    return f"{campo}: {mensajes}" if campo else mensajes
+
+
 class MiUsuario(APIView):
     def get(self, request):
         return Response(UsuarioSerializer(request.user).data)
@@ -158,7 +171,7 @@ class AutorizadosViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = UsuarioAutorizado.objects.select_related(
-            "carrera", "area", "sede"
+            "carrera__area", "area", "sede"
         ).order_by("email")
         u = self.request.user
         if u.rol == Rol.ADMIN:
@@ -273,7 +286,16 @@ class AutorizadosViewSet(viewsets.ModelViewSet):
                 else:
                     lote.creados += 1
             except Exception as exc:
-                lote.errores.append({"fila": numero, "motivo": str(exc)})
+                lote.errores.append(
+                    {
+                        "fila": numero,
+                        "motivo": (
+                            error_legible(exc.detail)
+                            if isinstance(exc, ValidationError)
+                            else str(exc)
+                        ),
+                    }
+                )
         lote.save()
         return Response(
             {

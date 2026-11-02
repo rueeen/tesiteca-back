@@ -5,8 +5,12 @@ from urllib.parse import urlparse
 from django.conf import settings
 from rest_framework import serializers
 from usuarios.models import Rol
-from .models import Tesis, AutorTesis, MaterialAdicional
-from .permisos import material_visible
+from usuarios.serializers import UsuarioMiniSerializer
+from academico.models import Sede
+from academico.serializers import CarreraMiniSerializer, MiniSerializer, tipo_mini
+from .palabras_clave import PalabrasClaveField, palabras_clave_lista
+from .models import Tesis, AutorTesis, MaterialAdicional, Estado
+from .permisos import material_visible, edita, revisa, puede_reenviar
 from .servicios import guardar_tesis
 
 REPOSITORIO = re.compile(r"^https://github\.com/[\w.-]+/[\w.-]+/?$")
@@ -86,7 +90,8 @@ class MaterialSerializer(serializers.ModelSerializer):
 
 class TesisListaSerializer(serializers.ModelSerializer):
     autores = serializers.SerializerMethodField()
-    carrera = serializers.CharField(source="carrera.nombre")
+    carrera = CarreraMiniSerializer(read_only=True)
+    tipo = serializers.SerializerMethodField()
     resumen = serializers.SerializerMethodField()
     palabras_clave = serializers.SerializerMethodField()
     tiene_repositorio = serializers.SerializerMethodField()
@@ -114,7 +119,10 @@ class TesisListaSerializer(serializers.ModelSerializer):
         return obj.resumen[:280]
 
     def get_palabras_clave(self, obj):
-        return [p.strip() for p in obj.palabras_clave.split(",") if p.strip()]
+        return palabras_clave_lista(obj.palabras_clave)
+
+    def get_tipo(self, obj):
+        return tipo_mini(obj.tipo)
 
     def get_tiene_repositorio(self, obj):
         return any(m.tipo == "REPOSITORIO" for m in obj.materiales.all())
@@ -124,6 +132,16 @@ class TesisDetalleSerializer(serializers.ModelSerializer):
     autores = AutorSerializer(many=True, read_only=True)
     materiales = MaterialSerializer(many=True, read_only=True)
     pdf = serializers.SerializerMethodField()
+    carrera = CarreraMiniSerializer(read_only=True)
+    sede = MiniSerializer(read_only=True)
+    tipo = serializers.SerializerMethodField()
+    palabras_clave = PalabrasClaveField(read_only=True)
+    subido_por = UsuarioMiniSerializer(read_only=True)
+    revisado_por = UsuarioMiniSerializer(read_only=True)
+    estado_nombre = serializers.CharField(source="get_estado_display", read_only=True)
+    puede_editar = serializers.SerializerMethodField()
+    puede_revisar = serializers.SerializerMethodField()
+    puede_reenviar = serializers.SerializerMethodField()
 
     class Meta:
         model = Tesis
@@ -150,7 +168,26 @@ class TesisDetalleSerializer(serializers.ModelSerializer):
             "autores",
             "materiales",
             "pdf",
+            "estado_nombre",
+            "puede_editar",
+            "puede_revisar",
+            "puede_reenviar",
         ]
+
+    def get_tipo(self, obj):
+        return tipo_mini(obj.tipo)
+
+    def get_puede_editar(self, obj):
+        return edita(self.context["request"].user, obj)
+
+    def get_puede_revisar(self, obj):
+        return (
+            revisa(self.context["request"].user, obj)
+            and obj.estado == Estado.EN_REVISION
+        )
+
+    def get_puede_reenviar(self, obj):
+        return puede_reenviar(self.context["request"].user, obj)
 
     def get_pdf(self, obj):
         return f"/api/tesis/{obj.id}/pdf/"
@@ -171,6 +208,10 @@ class AutoresJSON(serializers.Field):
 
 
 class TesisEscrituraSerializer(serializers.ModelSerializer):
+    sede = serializers.PrimaryKeyRelatedField(
+        queryset=Sede.objects.all(), required=False
+    )
+    palabras_clave = PalabrasClaveField(required=False)
     pdf = serializers.FileField(write_only=True, required=False)
     autores = AutoresJSON(write_only=True, required=False)
     repositorio_url = serializers.URLField(
@@ -199,13 +240,29 @@ class TesisEscrituraSerializer(serializers.ModelSerializer):
     def validate(self, datos):
         usuario = self.context["request"].user
         carrera = datos.get("carrera", getattr(self.instance, "carrera", None))
-        sede = datos.get("sede", getattr(self.instance, "sede", None))
+        if "sede" not in datos:
+            sede = usuario.sede
+            if sede is None:
+                activas = list(Sede.objects.filter(activa=True)[:2])
+                if len(activas) != 1:
+                    raise serializers.ValidationError(
+                        {
+                            "sede": "Indica una sede: tu usuario no tiene una sede y no hay una única sede activa"
+                        }
+                    )
+                sede = activas[0]
+            datos["sede"] = sede
+        sede = datos["sede"]
         if not self.instance and "pdf" not in datos:
             raise serializers.ValidationError("El PDF es obligatorio")
         if not self.instance:
             datos.setdefault("autores", [])
-        if not carrera or not carrera.activa or not sede or not sede.activa:
-            raise serializers.ValidationError("Selecciona carrera y sede activas")
+        if not carrera or not carrera.activa:
+            raise serializers.ValidationError(
+                {"carrera": "Selecciona una carrera activa"}
+            )
+        if not sede or not sede.activa:
+            raise serializers.ValidationError({"sede": "Selecciona una sede activa"})
         if (
             usuario.rol in (Rol.ESTUDIANTE, Rol.COORDINADOR)
             and usuario.carrera_id != carrera.id
