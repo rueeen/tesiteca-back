@@ -348,10 +348,8 @@ class SesionCookie(APIView):
 class RenovarSesion(SesionCookie):
     def post(self, request):
         valor = request.COOKIES.get(settings.REFRESH_COOKIE_NAME)
-        if not valor:
-            return borrar_refresh(
-                Response({"detail": "Sesión no iniciada"}, status=401)
-            )
+        if valor is None:
+            return Response(status=204)
         try:
             with transaction.atomic():
                 token = RefreshToken(valor)

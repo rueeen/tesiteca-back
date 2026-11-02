@@ -79,14 +79,18 @@ class SeguridadTests(APITestCase):
         self.assertEqual(self.renovar().status_code, 401)
 
     def test_cookie_ignora_body_y_falta_cookie(self):
+        sin_cookie = self.renovar()
+        self.assertEqual(sin_cookie.status_code, 204)
+        self.assertEqual(sin_cookie.content, b"")
         token = str(RefreshToken.for_user(self.usuario))
         r = self.client.post(
             "/api/auth/refresh/",
             {"refresh": token},
             HTTP_X_REQUESTED_WITH="XMLHttpRequest",
         )
-        self.assertEqual(r.status_code, 401)
-        self.assertEqual(r.data["detail"], "Sesión no iniciada")
+        self.assertEqual(r.status_code, 204)
+        self.assertEqual(r.content, b"")
+        self.assertIsNone(r.data)
         self.iniciar()
         r = self.client.post(
             "/api/auth/refresh/",
@@ -98,8 +102,16 @@ class SeguridadTests(APITestCase):
         r = self.renovar()
         self.assertEqual(r.status_code, 401)
         self.assertEqual(r.cookies[settings.REFRESH_COOKIE_NAME]["max-age"], 0)
+        self.client.cookies[settings.REFRESH_COOKIE_NAME] = ""
+        vacia = self.renovar()
+        self.assertEqual(vacia.status_code, 401)
+        self.assertEqual(vacia.cookies[settings.REFRESH_COOKIE_NAME]["max-age"], 0)
 
     def test_csrf_refresh_y_logout(self):
+        self.assertEqual(self.client.post("/api/auth/refresh/").status_code, 403)
+        self.assertEqual(
+            self.renovar(HTTP_ORIGIN="https://maligno.test").status_code, 403
+        )
         self.iniciar()
         for ruta in ["/api/auth/refresh/", "/api/auth/logout/"]:
             self.assertEqual(self.client.post(ruta).status_code, 403)
@@ -134,6 +146,7 @@ class SeguridadTests(APITestCase):
 
     def test_desactivar_revoca_todos_los_refresh_y_access(self):
         r = self.iniciar()
+        refresh = r.cookies[settings.REFRESH_COOKIE_NAME].value
         access = r.data["access"]
         otro = RefreshToken.for_user(self.usuario)
         self.client.force_authenticate(self.admin)
@@ -149,6 +162,8 @@ class SeguridadTests(APITestCase):
         self.client.force_authenticate(None)
         self.client.credentials(HTTP_AUTHORIZATION="Bearer " + access)
         self.assertEqual(self.client.get("/api/auth/me/").status_code, 401)
+        # force_authenticate(None) borra las cookies del cliente de pruebas.
+        self.client.cookies[settings.REFRESH_COOKIE_NAME] = refresh
         self.assertEqual(self.renovar().status_code, 401)
         self.client.force_authenticate(self.admin)
         self.assertEqual(
@@ -229,5 +244,5 @@ class SeguridadTests(APITestCase):
 
     def test_throttle_refresh_por_ip(self):
         for _ in range(30):
-            self.assertEqual(self.renovar().status_code, 401)
+            self.assertEqual(self.renovar().status_code, 204)
         self.assertEqual(self.renovar().status_code, 429)
