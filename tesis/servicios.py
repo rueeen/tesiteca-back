@@ -105,6 +105,14 @@ def guardar_tesis(datos, usuario, instancia=None):
                     url=repositorio,
                     solo_carrera=True,
                 )
+            if (
+                not instancia
+                and usuario.rol == Rol.ESTUDIANTE
+                and tesis.estado == Estado.EN_REVISION
+            ):
+                from notificaciones.servicios import avisar_revisores
+
+                avisar_revisores(tesis, usuario)
             if nuevos:
                 mantener = {tesis.pdf_original.name, tesis.pdf_marcado.name}
                 transaction.on_commit(

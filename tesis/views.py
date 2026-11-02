@@ -2,6 +2,7 @@ import ipaddress
 from pathlib import Path
 from rest_framework.permissions import IsAuthenticated
 from django.db import transaction
+from django.conf import settings
 from django.db.models import Q
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
@@ -21,10 +22,18 @@ from .serializers import (
 from .permisos import visibles, revisa, edita, es_autor, material_visible, PermisoTesis
 from .filtros import FiltroTesis
 from .marca_agua import aplicar_marca_lector
+from notificaciones.servicios import avisar_autores, avisar_revisores
 
 
 def ip_cliente(request):
-    # No confiar en X-Forwarded-For enviado por el cliente.
+    # Solo confiar en una cabecera cuando el proxy de entrada esté controlado.
+    if settings.TRUSTED_IP_HEADER:
+        try:
+            return str(
+                ipaddress.ip_address(request.META.get(settings.TRUSTED_IP_HEADER, ""))
+            )
+        except ValueError:
+            pass
     try:
         return str(ipaddress.ip_address(request.META.get("REMOTE_ADDR", "")))
     except ValueError:
@@ -173,6 +182,7 @@ class TesisViewSet(viewsets.ModelViewSet):
         )
 
     @action(detail=True, methods=["post"])
+    @transaction.atomic
     def aprobar(self, request, pk=None):
         tesis = self.get_object()
         if not revisa(request.user, tesis):
@@ -184,11 +194,13 @@ class TesisViewSet(viewsets.ModelViewSet):
         tesis.revisado_por = request.user
         tesis.observacion_revision = ""
         tesis.save()
+        avisar_autores(tesis, request.user, aprobada=True)
         return Response(
             TesisDetalleSerializer(tesis, context=self.get_serializer_context()).data
         )
 
     @action(detail=True, methods=["post"])
+    @transaction.atomic
     def rechazar(self, request, pk=None):
         tesis = self.get_object()
         if not revisa(request.user, tesis):
@@ -202,9 +214,11 @@ class TesisViewSet(viewsets.ModelViewSet):
         tesis.observacion_revision = observacion.strip()
         tesis.revisado_por = request.user
         tesis.save()
+        avisar_autores(tesis, request.user, aprobada=False)
         return Response({"estado": tesis.estado})
 
     @action(detail=True, methods=["post"])
+    @transaction.atomic
     def reenviar(self, request, pk=None):
         tesis = self.get_object()
         autor = es_autor(request.user, tesis)
@@ -217,6 +231,7 @@ class TesisViewSet(viewsets.ModelViewSet):
         tesis.revisado_por = None
         tesis.fecha_publicacion = None
         tesis.save()
+        avisar_revisores(tesis, request.user, reenviada=True)
         return Response({"estado": tesis.estado})
 
     @action(detail=True, methods=["get", "post"])

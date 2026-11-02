@@ -1,0 +1,3 @@
+-r requirements.txt
+# Necesario para channels.testing.WebsocketCommunicator.
+daphne==4.2.3

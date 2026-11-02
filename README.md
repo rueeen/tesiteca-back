@@ -22,7 +22,7 @@ No versionar `.env`, SQLite ni los archivos privados. `SECRET_KEY` es obligatori
 
 ## Variables
 
-Ver `.env.example`. Configurar `DEBUG=False`, `ALLOWED_HOSTS` y `CORS_ALLOWED_ORIGINS` para cada despliegue. `PRIVATE_MEDIA_ROOT` admite una ruta absoluta; una relativa se resuelve desde el directorio de trabajo. Debe quedar fuera de directorios públicos. Los límites son `MAX_PDF_MB=30` y `MAX_MATERIAL_MB=50`. Los tokens duran `ACCESS_TOKEN_MINUTES=60` y `REFRESH_TOKEN_DAYS=7`.
+Ver `.env.example`. Configurar `DEBUG=False`, `ALLOWED_HOSTS` y `CORS_ALLOWED_ORIGINS` para cada despliegue. `PRIVATE_MEDIA_ROOT` admite una ruta absoluta; una relativa se resuelve desde el directorio de trabajo. Debe quedar fuera de directorios públicos. Los límites son `MAX_PDF_MB=30` y `MAX_MATERIAL_MB=50`. Los tokens duran `ACCESS_TOKEN_MINUTES=10` y `REFRESH_TOKEN_DAYS=7`.
 
 Correo local: `EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend`. En producción usar `django.core.mail.backends.smtp.EmailBackend` y configurar `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `EMAIL_USE_TLS` y `DEFAULT_FROM_EMAIL`. Guardar las credenciales en variables o en `.env` protegido, nunca en Git.
 
@@ -32,13 +32,13 @@ Correo local: `EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend`. En
 curl -X POST http://127.0.0.1:8000/api/auth/solicitar-codigo/ \
   -H 'Content-Type: application/json' -d '{"email":"demo1@inacapmail.cl"}'
 # Leer el código de seis dígitos en la consola del servidor:
-curl -X POST http://127.0.0.1:8000/api/auth/verificar-codigo/ \
+curl -c cookies.txt -X POST http://127.0.0.1:8000/api/auth/verificar-codigo/ \
   -H 'Content-Type: application/json' -d '{"email":"demo1@inacapmail.cl","codigo":"123456"}'
 ```
 
-La respuesta devuelve `access`, `refresh` y `usuario`. Enviar `Authorization: Bearer <access>` en las demás solicitudes. Renovar en `POST /api/auth/refresh/` con `{"refresh":"..."}`. Consultar perfil en `GET /api/auth/me/`.
+La respuesta devuelve solo `access` y `usuario`; el refresh se guarda en una cookie httpOnly. Enviar `Authorization: Bearer <access>` en las demás solicitudes. Renovar con la cookie en `POST /api/auth/refresh/`, nunca con el body. Consultar perfil en `GET /api/auth/me/`. No guardar ninguno de los tokens en localStorage: el access vive en memoria y la cookie la gestiona el navegador.
 
-Las solicitudes de código tienen respuesta genérica para correos institucionales; dominios ajenos se rechazan con 400. Se cuentan también las solicitudes de emails no autorizados para que el límite no revele la lista blanca. Código válido durante 10 minutos, cinco intentos, un solo uso y tres solicitudes por correo en 10 minutos. Además existe throttle de 10/min por IP por endpoint. La caché de desarrollo es local al proceso; configurar caché compartida si se despliegan varios workers. Desactivar un autorizado impide nuevos logins; un JWT previamente emitido sigue vigente hasta su expiración.
+Las solicitudes de código tienen respuesta genérica para correos institucionales; dominios ajenos se rechazan con 400. Se cuentan también las solicitudes de emails no autorizados para que el límite no revele la lista blanca. Código válido durante 10 minutos, cinco intentos, un solo uso y tres solicitudes por correo en 10 minutos. Además existe throttle de 10/min por IP por endpoint. La caché de desarrollo es local al proceso; configurar caché compartida si se despliegan varios workers. Desactivar un autorizado desactiva también al usuario y revoca todos sus refresh; los access existentes dejan de ser aceptados por SimpleJWT. Reactivar permite iniciar una sesión nueva, sin recuperar los refresh revocados.
 
 El rol ADMIN de la API no habilita automáticamente el panel Django. Para el panel:
 
@@ -90,6 +90,7 @@ Se valida firma `%PDF`, tamaño, lectura completa, ausencia de cifrado y SHA-256
 ```bash
 python manage.py check
 python manage.py makemigrations --check --dry-run
+pip install -r requirements-dev.txt
 python manage.py test
 ```
 
@@ -207,3 +208,104 @@ La respuesta de `POST`/`PATCH` es el **detalle** del contrato.
 
 ### Autorizados `GET /api/admin/autorizados/`
 Cada item en lectura: `carrera`: CarreraMini | null, `area`: Mini | null, `sede`: Mini | null (en escritura siguen aceptando IDs). Implementarlo en `to_representation` del `AutorizadoSerializer`.
+
+
+## Sesiones seguras y cambios del frontend
+
+`verificar-codigo/` y `refresh/` responden exclusivamente `{access, usuario}`. La cookie `tesiteca_refresh` es httpOnly, SameSite=Strict, Path=/api/auth/, con Secure en producción y una vida de siete días. El access dura diez minutos por defecto. Cada refresh rota la cookie e invalida el token anterior. El frontend debe abandonar localStorage y borrar tokens antiguos durante la actualización.
+
+Usar `credentials: "include"` en login, refresh y logout (también cuando en desarrollo la API tiene otro origen). Para restaurar sesión al cargar la página, llamar una sola vez a `POST /api/auth/refresh/`: devuelve access y usuario. Centralizar las renovaciones en una única petición concurrente; reusar un refresh rotado da 401. En refresh y logout enviar `X-Requested-With: XMLHttpRequest`; si se envía Origin, debe coincidir exactamente con `CSRF_TRUSTED_ORIGINS`. Se limitan a 30 peticiones por minuto por IP. `logout/` devuelve 204 y revoca la cookie aun con access vencido. Logout revoca el refresh; el access previamente emitido conserva su vida de diez minutos mientras el usuario esté activo.
+
+En herramientas como curl, conservar las cookies con `-c cookies.txt` al verificar el código y usar `-b cookies.txt -c cookies.txt -H 'X-Requested-With: XMLHttpRequest'` para renovar. No versionar ni compartir ese archivo. El cuerpo enviado a refresh se ignora.
+
+La plantilla de autorizados sigue siendo compatible. Para desactivar/reactivar por importación, se puede añadir al final la columna opcional `activo`, con `true/false`, `1/0` o `sí/no`. Si se omite, conserva el estado anterior. PATCH, importación y admin sincronizan la activación del usuario y la blacklist.
+
+## Notificaciones
+
+Las notificaciones se guardan en SQLite y siempre están disponibles por REST. Solo se consultan y marcan las propias:
+
+- `GET /api/notificaciones/?leida=false&desde_id=123`: paginado, con IDs mayores al indicado, más recientes primero.
+- `GET /api/notificaciones/resumen/`: `{no_leidas, ultima_id}` (0 si no hay ninguna).
+- `POST /api/notificaciones/{id}/leer/`: 204; las ajenas devuelven 404.
+- `POST /api/notificaciones/leer-todas/`: `{actualizadas}`.
+- `POST /api/notificaciones/ticket/`: `{ticket, expira_en}`, limitado a 20/min por usuario.
+
+Cada elemento tiene `id, tipo, titulo, mensaje, enlace, datos, leida, creada`. El envío a revisión y el reenvío avisan al coordinador de la carrera y a los directores del área. La aprobación y el rechazo avisan a quien subió la tesis y a los autores vinculados. Se excluyen duplicados, usuarios inactivos y el actor. Los avisos se crean en la transacción de la tesis; la entrega ocurre después del commit. Los fallos de SMTP o WebSocket se registran sin revertir la operación.
+
+Con `NOTIFICACIONES_WS=False`, el front debe usar polling. Con `True`, solicitar un ticket mediante JWT y abrir `wss://DOMINIO-ASGI/ws/notificaciones/?ticket=...`. No poner access ni refresh en query strings. El ticket es aleatorio, en la base solo queda su SHA-256, vence en 30 segundos y se consume una sola vez. Validar el origen con `WS_ALLOWED_ORIGINS` y pedir otro ticket en cada reconexión. Socket inválido: 4401; WS deshabilitado: 4403. Nunca usar el socket para marcar leídas ni modificar datos.
+
+Al conectar se recibe `{tipo: "resumen", no_leidas, ultima_id}`. Cada aviso nuevo llega como `{tipo: "notificacion", notificacion: {...}}`. El cliente puede enviar `{tipo: "ping"}` y recibirá `{tipo: "pong"}`. Ante desconexión, recuperar el historial por REST. Si el polling devuelve varias páginas, recorrerlas antes de avanzar el cursor `desde_id`, para no perder avisos entre páginas.
+
+Para pruebas completas instalar también `pip install -r requirements-dev.txt`; Daphne se usa para `WebsocketCommunicator`, aunque el despliegue ASGI use Uvicorn.
+
+## Deploy en PythonAnywhere
+
+### 1. API REST en la web app WSGI
+
+Crear el virtualenv Python 3.11+, instalar `requirements.txt` y configurar la web app manual como se indica en la sección PythonAnywhere anterior. `config/wsgi.py` permanece sin cambios. Copiar `.env.example` a `.env`, generar una SECRET_KEY y mantener el archivo privado. Para producción:
+
+```dotenv
+DEBUG=False
+ALLOWED_HOSTS=USUARIO.pythonanywhere.com
+FRONTEND_URL=https://tesiteca.netlify.app
+CSRF_TRUSTED_ORIGINS=https://tesiteca.netlify.app
+CORS_ALLOWED_ORIGINS=
+WS_ALLOWED_ORIGINS=https://tesiteca.netlify.app
+SECURE_COOKIES=True
+SECURE_SSL_REDIRECT=True
+SECURE_HSTS_SECONDS=31536000
+TRUSTED_IP_HEADER=HTTP_X_NF_CLIENT_CONNECTION_IP
+NOTIFICACIONES_WS=False
+```
+
+Verificar HTTPS antes de activar HSTS; HSTS afecta conexiones futuras durante el plazo configurado. `check --deploy` puede advertir sobre incluir subdominios y sobre preload: ambas políticas se dejan desactivadas, sin silenciar los checks, hasta decidirlas con el propietario del dominio. Alternativamente activar **Force HTTPS** en la pestaña Web de PythonAnywhere. La aplicación de producción interpreta `X-Forwarded-Proto` como indicación HTTPS: solo debe recibir tráfico de proxies controlados que sobrescriban esa cabecera.
+
+```bash
+python manage.py migrate
+python manage.py collectstatic --noinput
+python manage.py check --deploy
+```
+
+Mapear únicamente `/static/` a `staticfiles/`. **No mapear PRIVATE_MEDIA_ROOT como estático ni como media pública**. Recargar la web app y probar login, renovación por cookie, publicación y notificaciones REST.
+
+### 2. SMTP
+
+Las cuentas gratuitas de PythonAnywhere solo permiten SMTP de Gmail; las pagadas pueden usar otros servidores, incluido el institucional.
+
+1. En la cuenta Google de envío, activar verificación en dos pasos.
+2. En Cuenta Google → Seguridad → Contraseñas de aplicaciones, generar una contraseña de aplicación de 16 caracteres (no usar la contraseña normal).
+3. Configurar `EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend`, `EMAIL_HOST=smtp.gmail.com`, `EMAIL_PORT=587`, `EMAIL_USE_TLS=True`, `EMAIL_TIMEOUT=10`, `EMAIL_HOST_USER` con la cuenta Gmail y `EMAIL_HOST_PASSWORD` con esa contraseña. `DEFAULT_FROM_EMAIL` debe usar la misma cuenta Gmail. Los valores se guardan exclusivamente en configuración privada.
+4. Desde la consola de PythonAnywhere ejecutar `python manage.py probar_correo destino@inacap.cl`. Muestra host, puerto y usuario, nunca la contraseña; en caso de fallo muestra el error del transporte. Comprobar la recepción antes de abrir el sistema.
+5. Si se desean correos de aprobación/rechazo además de avisos en la app, configurar `NOTIFICAR_POR_CORREO=True`.
+
+`manage.py check` advierte en producción si se dejó correo de consola o cookies inseguras. El timeout evita que un SMTP caído deje la petición indefinidamente abierta. El envío SMTP real depende de las credenciales y del plan del propietario; las pruebas locales usan el backend de memoria.
+
+### 3. Mantenimiento diario
+
+En Tasks de PythonAnywhere programar diariamente, usando el Python del virtualenv y el directorio del proyecto:
+
+```bash
+cd /home/USUARIO/tesiteca-back && /home/USUARIO/.virtualenvs/tesiteca/bin/python manage.py flushexpiredtokens
+```
+
+Conservar respaldos de SQLite y los archivos privados. Los tickets WS caducados no permiten autenticarse; pueden purgarse periódicamente según la política de retención de la instalación.
+
+### 4. WebSocket opcional: app ASGI beta independiente
+
+La web app WSGI normal de PythonAnywhere **no soporta WebSockets**. Si se necesita tiempo real, crear una segunda web app ASGI mediante CLI/API siguiendo la ayuda **ASGI command line** de PythonAnywhere y configurar, desde el directorio del proyecto y su virtualenv:
+
+```bash
+uvicorn config.asgi:application --uds ${DOMAIN_SOCKET}
+```
+
+Configurar `NOTIFICACIONES_WS=True` y un `REDIS_URL` accesible, con autenticación/TLS según el proveedor. La app WSGI y la app ASGI deben compartir la **misma base de datos**, SECRET_KEY y configuración de Redis; los tickets se validan en la base y Redis distribuye los avisos entre procesos. No usar copias independientes de SQLite. Permitir el origen Netlify en `WS_ALLOWED_ORIGINS` y usar el dominio ASGI en el frontend.
+
+Sin Redis, `InMemoryChannelLayer` solo sirve cuando HTTP y WS se atienden en **el mismo proceso ASGI**. No comunica una web app WSGI con otra ASGI, ni varios workers. Para la topología de dos apps, si no hay Redis dejar `NOTIFICACIONES_WS=False` y usar polling.
+
+Prueba ASGI local de un único proceso: `NOTIFICACIONES_WS=True uvicorn config.asgi:application --host 127.0.0.1 --port 8001 --no-access-log`. No habilitar logs de URLs con tickets en producción.
+
+### 5. Proxy Netlify
+
+Netlify debe redirigir `/api/*` hacia la API de PythonAnywhere (consultar el README del frontend). Para el navegador, API y frontend comparten origen: la cookie es first-party y SameSite=Strict también funciona en Safari/iOS. En producción no hace falta CORS para esa ruta. Los WebSockets conectan directamente a la app ASGI, con ticket y validación de origen.
+
+Configurar `TRUSTED_IP_HEADER=HTTP_X_NF_CLIENT_CONNECTION_IP` **solo cuando el tráfico de la API pasa por el proxy controlado de Netlify**, y asegurar que no se admita una cabecera manipulada por accesos directos al backend. Si no se puede garantizar, dejarla vacía: se usa REMOTE_ADDR. Una cabecera inválida también vuelve a REMOTE_ADDR. La IP real se incorpora a las marcas de agua y al registro de accesos.

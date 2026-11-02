@@ -14,6 +14,9 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
+    "rest_framework_simplejwt.token_blacklist",
+    "channels",
+    "notificaciones",
     "corsheaders",
     "django_filters",
     "academico",
@@ -63,7 +66,7 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 LANGUAGE_CODE = "es-cl"
-TIME_ZONE = "America/Santiago"
+TIME_ZONE = config("TIME_ZONE", default="America/Santiago")
 USE_I18N = True
 USE_TZ = True
 STATIC_URL = "static/"
@@ -106,11 +109,18 @@ REST_FRAMEWORK = {
         "rest_framework.filters.SearchFilter",
         "rest_framework.filters.OrderingFilter",
     ],
-    "DEFAULT_THROTTLE_RATES": {"codigo": "10/min"},
+    "DEFAULT_THROTTLE_RATES": {
+        "codigo": "10/min",
+        "refresh": "30/min",
+        "ticket": "20/min",
+    },
 }
 SIMPLE_JWT = {
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
+    "UPDATE_LAST_LOGIN": True,
     "ACCESS_TOKEN_LIFETIME": timedelta(
-        minutes=config("ACCESS_TOKEN_MINUTES", default=60, cast=int)
+        minutes=config("ACCESS_TOKEN_MINUTES", default=10, cast=int)
     ),
     "REFRESH_TOKEN_LIFETIME": timedelta(
         days=config("REFRESH_TOKEN_DAYS", default=7, cast=int)
@@ -119,3 +129,44 @@ SIMPLE_JWT = {
 
 FILE_UPLOAD_PERMISSIONS = 0o600
 FILE_UPLOAD_DIRECTORY_PERMISSIONS = 0o700
+
+FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:5173").rstrip("/")
+CSRF_TRUSTED_ORIGINS = config(
+    "CSRF_TRUSTED_ORIGINS", default="http://localhost:5173", cast=Csv()
+)
+WS_ALLOWED_ORIGINS = config(
+    "WS_ALLOWED_ORIGINS", default="http://localhost:5173", cast=Csv()
+)
+SECURE_COOKIES = config("SECURE_COOKIES", default=False, cast=bool)
+REFRESH_COOKIE_NAME = config("REFRESH_COOKIE_NAME", default="tesiteca_refresh")
+EMAIL_TIMEOUT = config("EMAIL_TIMEOUT", default=10, cast=int)
+NOTIFICAR_POR_CORREO = config("NOTIFICAR_POR_CORREO", default=False, cast=bool)
+NOTIFICACIONES_WS = config("NOTIFICACIONES_WS", default=False, cast=bool)
+TRUSTED_IP_HEADER = config("TRUSTED_IP_HEADER", default="")
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = "DENY"
+SECURE_REFERRER_POLICY = "same-origin"
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    SECURE_SSL_REDIRECT = config("SECURE_SSL_REDIRECT", default=False, cast=bool)
+    SECURE_HSTS_SECONDS = config("SECURE_HSTS_SECONDS", default=0, cast=int)
+    SESSION_COOKIE_SECURE = SECURE_COOKIES
+    CSRF_COOKIE_SECURE = SECURE_COOKIES
+
+from corsheaders.defaults import default_headers
+
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_HEADERS = list(dict.fromkeys([*default_headers, "x-requested-with"]))
+REDIS_URL = config("REDIS_URL", default="")
+# InMemory solo comunica HTTP y WS dentro del mismo proceso ASGI, no entre WSGI y ASGI.
+CHANNEL_LAYERS = (
+    {
+        "default": {
+            "BACKEND": "channels_redis.core.RedisChannelLayer",
+            "CONFIG": {"hosts": [REDIS_URL]},
+        }
+    }
+    if REDIS_URL
+    else {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
+)
+ASGI_APPLICATION = "config.asgi.application"

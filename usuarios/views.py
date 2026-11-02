@@ -6,6 +6,11 @@ from datetime import timedelta
 from openpyxl import Workbook, load_workbook
 from django.conf import settings
 from django.contrib.auth.hashers import make_password, check_password
+from django.contrib.auth.models import update_last_login
+from rest_framework_simplejwt.serializers import TokenRefreshSerializer
+from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
+from rest_framework.permissions import BasePermission
+from .cookies import poner_refresh, borrar_refresh
 from django.core.mail import send_mail
 from django.db import transaction
 from django.http import HttpResponse
@@ -131,12 +136,15 @@ class VerificarCodigo(APIView):
                 usuario.set_unusable_password()
             usuario.save()
             token = RefreshToken.for_user(usuario)
-        return Response(
-            {
-                "access": str(token.access_token),
-                "refresh": str(token),
-                "usuario": UsuarioSerializer(usuario).data,
-            }
+        update_last_login(None, usuario)
+        return poner_refresh(
+            Response(
+                {
+                    "access": str(token.access_token),
+                    "usuario": UsuarioSerializer(usuario).data,
+                }
+            ),
+            token,
         )
 
 
@@ -227,7 +235,7 @@ class AutorizadosViewSet(viewsets.ModelViewSet):
                 libro.close()
             else:
                 raise ValueError("Formato no admitido")
-            if not filas or list(filas[0]) != COLUMNAS:
+            if not filas or list(filas[0]) not in (COLUMNAS, COLUMNAS + ["activo"]):
                 raise ValueError("Las columnas deben coincidir con la plantilla")
             if len(filas) > 10001:
                 raise ValueError("Máximo 10000 filas por importación")
@@ -242,7 +250,7 @@ class AutorizadosViewSet(viewsets.ModelViewSet):
             try:
                 datos = {
                     k: str(v).strip() if v is not None else ""
-                    for k, v in zip(COLUMNAS, fila)
+                    for k, v in zip(filas[0], fila)
                 }
                 carrera = (
                     Carrera.objects.get(codigo=datos["carrera_codigo"])
@@ -268,6 +276,19 @@ class AutorizadosViewSet(viewsets.ModelViewSet):
                     area=area.pk if area else None,
                     sede=sede.pk if sede else None,
                 )
+                if "activo" in datos:
+                    valores_activo = {
+                        "true": True,
+                        "false": False,
+                        "1": True,
+                        "0": False,
+                        "sí": True,
+                        "si": True,
+                        "no": False,
+                    }
+                    if datos["activo"].lower() not in valores_activo:
+                        raise ValueError("activo debe ser true/false, 1/0 o sí/no")
+                    contenido["activo"] = valores_activo[datos["activo"].lower()]
                 existente = UsuarioAutorizado.objects.filter(
                     email=contenido["email"].lower()
                 ).first()
@@ -303,3 +324,77 @@ class AutorizadosViewSet(viewsets.ModelViewSet):
                 for c in ["total_filas", "creados", "actualizados", "errores"]
             }
         )
+
+
+class ProteccionCookie(BasePermission):
+    message = "Solicitud de sesión no permitida"
+
+    def has_permission(self, request, view):
+        origen = request.headers.get("Origin")
+        return request.headers.get("X-Requested-With") == "XMLHttpRequest" and (
+            origen is None or origen in settings.CSRF_TRUSTED_ORIGINS
+        )
+
+
+class SesionCookie(APIView):
+    authentication_classes = (
+        []
+    )  # Permitir renovar/cerrar aunque el access esté vencido.
+    permission_classes = [AllowAny, ProteccionCookie]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "refresh"
+
+
+class RenovarSesion(SesionCookie):
+    def post(self, request):
+        valor = request.COOKIES.get(settings.REFRESH_COOKIE_NAME)
+        if not valor:
+            return borrar_refresh(
+                Response({"detail": "Sesión no iniciada"}, status=401)
+            )
+        try:
+            with transaction.atomic():
+                token = RefreshToken(valor)
+                usuario = (
+                    Usuario.objects.select_related("carrera", "area", "sede")
+                    .filter(pk=token["user_id"])
+                    .first()
+                )
+                if (
+                    usuario is None
+                    or not usuario.is_active
+                    or not UsuarioAutorizado.objects.filter(
+                        email=usuario.email, activo=True
+                    ).exists()
+                ):
+                    token.blacklist()
+                    return borrar_refresh(
+                        Response({"detail": "Sesión no autorizada"}, status=401)
+                    )
+                serial = TokenRefreshSerializer(data={"refresh": valor})
+                serial.is_valid(raise_exception=True)
+                datos = serial.validated_data
+                return poner_refresh(
+                    Response(
+                        {
+                            "access": datos["access"],
+                            "usuario": UsuarioSerializer(usuario).data,
+                        }
+                    ),
+                    datos["refresh"],
+                )
+        except (TokenError, InvalidToken):
+            return borrar_refresh(
+                Response({"detail": "Sesión inválida o vencida"}, status=401)
+            )
+
+
+class CerrarSesion(SesionCookie):
+    def post(self, request):
+        valor = request.COOKIES.get(settings.REFRESH_COOKIE_NAME)
+        if valor:
+            try:
+                RefreshToken(valor).blacklist()
+            except TokenError:
+                pass
+        return borrar_refresh(Response(status=204))
