@@ -1,6 +1,6 @@
 from io import BytesIO
 from reportlab.pdfgen import canvas
-from pypdf import PdfReader, PdfWriter
+from pypdf import PdfReader, PdfWriter, Transformation
 from django.core.files.base import ContentFile
 from django.utils import timezone
 
@@ -18,7 +18,16 @@ def _marcar(origen, dibujar):
         dibujar(lienzo, ancho, alto)
         lienzo.save()
         capa.seek(0)
-        pagina.merge_page(PdfReader(capa).pages[0])
+        # La capa se dibuja en coordenadas locales y luego se sitúa en el origen
+        # real de la página. Transformar también sus cajas evita recortar la marca.
+        marca = PdfReader(capa).pages[0]
+        izquierda = float(pagina.mediabox.left)
+        abajo = float(pagina.mediabox.bottom)
+        marca.add_transformation(Transformation().translate(izquierda, abajo))
+        for caja in (marca.mediabox, marca.cropbox, marca.trimbox):
+            caja.lower_left = (izquierda, abajo)
+            caja.upper_right = (izquierda + ancho, abajo + alto)
+        pagina.merge_page(marca)
         salida.add_page(pagina)
     resultado = BytesIO()
     salida.write(resultado)

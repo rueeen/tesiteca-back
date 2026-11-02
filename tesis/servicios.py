@@ -115,6 +115,7 @@ def guardar_tesis(datos, usuario, instancia=None):
                     ],
                     robust=True,
                 )
+        tesis._prefetched_objects_cache = {}
         return tesis
     except Exception as exc:
         for nombre in nuevos:

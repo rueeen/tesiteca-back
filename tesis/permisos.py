@@ -27,13 +27,22 @@ def revisa(usuario, tesis):
     )
 
 
+def es_autor(usuario, tesis):
+    return tesis.subido_por_id == usuario.id or any(
+        autor.usuario_id == usuario.id for autor in tesis.autores.all()
+    )
+
+
+def puede_reenviar(usuario, tesis):
+    return tesis.estado in (Estado.BORRADOR, Estado.RECHAZADA) and es_autor(
+        usuario, tesis
+    )
+
+
 def edita(usuario, tesis):
     if revisa(usuario, tesis):
         return True
-    return tesis.estado in (Estado.BORRADOR, Estado.RECHAZADA) and (
-        tesis.subido_por_id == usuario.id
-        or tesis.autores.filter(usuario=usuario).exists()
-    )
+    return puede_reenviar(usuario, tesis)
 
 
 def material_visible(usuario, material):

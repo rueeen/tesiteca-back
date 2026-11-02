@@ -72,3 +72,12 @@ class Profesores(APIView):
                 .distinct()
             )
         )
+
+
+class CatalogoTipos(APIView):
+    def get(self, request):
+        from .serializers import tipo_mini
+
+        return Response(
+            [tipo_mini(codigo) for codigo, _ in Tesis._meta.get_field("tipo").choices]
+        )

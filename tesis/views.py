@@ -18,7 +18,7 @@ from .serializers import (
     TesisEscrituraSerializer,
     MaterialSerializer,
 )
-from .permisos import visibles, revisa, edita, material_visible, PermisoTesis
+from .permisos import visibles, revisa, edita, es_autor, material_visible, PermisoTesis
 from .filtros import FiltroTesis
 from .marca_agua import aplicar_marca_lector
 
@@ -63,7 +63,7 @@ class TesisViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         qs = visibles(
             Tesis.objects.select_related(
-                "carrera", "sede", "subido_por"
+                "carrera__area", "sede", "subido_por", "revisado_por"
             ).prefetch_related("autores", "materiales"),
             self.request.user,
         )
@@ -207,10 +207,7 @@ class TesisViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def reenviar(self, request, pk=None):
         tesis = self.get_object()
-        autor = (
-            tesis.subido_por_id == request.user.pk
-            or tesis.autores.filter(usuario=request.user).exists()
-        )
+        autor = es_autor(request.user, tesis)
         if not autor:
             raise PermissionDenied()
         if tesis.estado not in (Estado.BORRADOR, Estado.RECHAZADA):

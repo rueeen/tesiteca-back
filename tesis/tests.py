@@ -611,3 +611,366 @@ class BackendTests(APITestCase):
         )
         self.assertTrue(formulario.is_valid(), formulario.errors)
         self.assertEqual(formulario.save().email, "form@inacap.cl")
+
+    def test_catalogo_tipos_con_nombres_del_modelo(self):
+        self.login(self.alumno)
+        r = self.client.get("/api/catalogos/tipos/")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(
+            r.data,
+            [
+                {"id": "TESIS", "nombre": "Tesis"},
+                {"id": "PROYECTO_TITULO", "nombre": "Proyecto de título"},
+                {"id": "INFORME_PRACTICA", "nombre": "Informe de práctica"},
+            ],
+        )
+        self.client.force_authenticate(None)
+        self.assertEqual(self.client.get("/api/catalogos/tipos/").status_code, 401)
+
+    def comprobar_contrato_detalle(self, datos):
+        self.assertIsInstance(datos["palabras_clave"], list)
+        for campo in ["carrera", "sede", "tipo", "subido_por"]:
+            self.assertIsInstance(datos[campo], dict)
+            self.assertIn("id", datos[campo])
+        self.assertEqual(
+            set(datos["carrera"]),
+            {"id", "nombre", "codigo", "area", "permite_repositorio"},
+        )
+        self.assertEqual(set(datos["sede"]), {"id", "nombre"})
+        self.assertEqual(set(datos["tipo"]), {"id", "nombre"})
+        self.assertEqual(set(datos["subido_por"]), {"id", "nombre_completo", "email"})
+        for bandera in ["puede_editar", "puede_revisar", "puede_reenviar"]:
+            self.assertIsInstance(datos[bandera], bool)
+        self.assertIn("estado_nombre", datos)
+
+    def test_contrato_detalle_listado_y_flags_por_rol(self):
+        tesis = self.tesis(usuario=self.alumno, publicar=False)
+        tesis.estado = Estado.RECHAZADA
+        tesis.save()
+        self.login(self.alumno)
+        r = self.client.get(f"/api/tesis/{tesis.pk}/")
+        self.comprobar_contrato_detalle(r.data)
+        self.assertEqual(
+            [r.data[c] for c in ["puede_editar", "puede_revisar", "puede_reenviar"]],
+            [True, False, True],
+        )
+        propias = self.client.get("/api/tesis/mis-tesis/").data["results"]
+        self.comprobar_contrato_detalle(propias[0])
+        ajeno = Usuario.objects.create_user(
+            "ajeno@inacapmail.cl",
+            nombre_completo="Ajeno",
+            carrera=self.ap,
+            sede=self.sede,
+        )
+        self.login(ajeno)
+        self.assertEqual(self.client.get(f"/api/tesis/{tesis.pk}/").status_code, 404)
+        tesis.estado = Estado.PUBLICADA
+        tesis.save()
+        r = self.client.get(f"/api/tesis/{tesis.pk}/")
+        self.assertEqual(
+            [r.data[c] for c in ["puede_editar", "puede_revisar", "puede_reenviar"]],
+            [False, False, False],
+        )
+        listado = self.client.get("/api/tesis/").data["results"][0]
+        self.assertIsInstance(listado["carrera"], dict)
+        self.assertIsInstance(listado["tipo"], dict)
+        self.assertIsInstance(listado["palabras_clave"], list)
+        tesis.estado = Estado.EN_REVISION
+        tesis.save()
+        self.login(self.coordinador)
+        r = self.client.get(f"/api/tesis/{tesis.pk}/")
+        self.assertEqual(
+            [r.data[c] for c in ["puede_editar", "puede_revisar", "puede_reenviar"]],
+            [True, True, False],
+        )
+        self.comprobar_contrato_detalle(
+            self.client.get("/api/tesis/pendientes/").data["results"][0]
+        )
+        self.client.post(f"/api/tesis/{tesis.pk}/aprobar/")
+        detalle = self.client.get(f"/api/tesis/{tesis.pk}/").data
+        self.assertEqual(detalle["revisado_por"]["id"], self.coordinador.pk)
+        self.assertFalse(detalle["puede_revisar"])
+
+    def datos_subida(self, texto="Nueva tesis"):
+        return {
+            "titulo": texto,
+            "resumen": "Resumen",
+            "tipo": "TESIS",
+            "anio": 2026,
+            "carrera": self.ap.pk,
+            "profesor_guia": "Guía",
+            "autores": "[]",
+            "pdf": pdf_demo(texto),
+        }
+
+    def test_post_sin_sede_y_normalizacion_palabras_clave(self):
+        self.login(self.alumno)
+        for numero, valor in enumerate(
+            [" iot, web, IOT, ,web ", '["iot", "web", "IOT", "", " web "]']
+        ):
+            with self.subTest(valor=valor):
+                datos = self.datos_subida(f"Palabras {numero}")
+                datos["palabras_clave"] = valor
+                r = self.client.post("/api/tesis/", datos, format="multipart")
+                self.assertEqual(r.status_code, 201, r.data)
+                self.assertEqual(r.data["sede"]["id"], self.sede.pk)
+                self.assertEqual(r.data["palabras_clave"], ["iot", "web"])
+                self.comprobar_contrato_detalle(r.data)
+                self.assertEqual(
+                    Tesis.objects.get(pk=r.data["id"]).palabras_clave, "iot,web"
+                )
+
+    def test_sede_unica_ambigua_inactiva_y_explicita(self):
+        self.alumno.sede = None
+        self.alumno.save()
+        self.login(self.alumno)
+        r = self.client.post(
+            "/api/tesis/", self.datos_subida("Sede única"), format="multipart"
+        )
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data["sede"]["id"], self.sede.pk)
+        otra = Sede.objects.create(nombre="Otra", ciudad="Otra")
+        r = self.client.post(
+            "/api/tesis/", self.datos_subida("Ambigua"), format="multipart"
+        )
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("sede", r.data)
+        datos = self.datos_subida("Sede explícita")
+        datos["sede"] = otra.pk
+        r = self.client.post("/api/tesis/", datos, format="multipart")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data["sede"]["id"], otra.pk)
+        Sede.objects.all().update(activa=False)
+        r = self.client.post(
+            "/api/tesis/", self.datos_subida("Sin activas"), format="multipart"
+        )
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("sede", r.data)
+
+    def test_patch_responde_contrato_y_autores_actualizados(self):
+        tesis = self.tesis(usuario=self.alumno, publicar=False)
+        tesis.estado = Estado.RECHAZADA
+        tesis.save()
+        self.login(self.alumno)
+        r = self.client.patch(
+            f"/api/tesis/{tesis.pk}/",
+            {
+                "palabras_clave": '["iot","web","IOT"]',
+                "autores": '[{"nombre_completo":"Coautora nueva","email":"nueva@inacapmail.cl"}]',
+            },
+            format="multipart",
+        )
+        self.assertEqual(r.status_code, 200, r.data)
+        self.comprobar_contrato_detalle(r.data)
+        self.assertEqual(r.data["palabras_clave"], ["iot", "web"])
+        self.assertIn(
+            "Coautora nueva", [autor["nombre_completo"] for autor in r.data["autores"]]
+        )
+        tesis.refresh_from_db()
+        self.assertEqual(tesis.palabras_clave, "iot,web")
+
+    def test_palabras_clave_json_invalido_y_lectura_legacy(self):
+        from .palabras_clave import PalabrasClaveField, palabras_clave_lista
+        from rest_framework.exceptions import ValidationError
+
+        campo = PalabrasClaveField()
+        for valor in ['["iot",', '[1,"web"]', {"iot": True}, "a" * 501]:
+            with self.subTest(valor=valor), self.assertRaises(ValidationError):
+                campo.to_internal_value(valor)
+        self.assertEqual(palabras_clave_lista('["iot", "web", "IOT"]'), ["iot", "web"])
+        tesis = self.tesis()
+        tesis.palabras_clave = '["iot", "web"]'
+        tesis.save()
+        self.login(self.alumno)
+        self.assertEqual(
+            self.client.get(f"/api/tesis/{tesis.pk}/").data["palabras_clave"],
+            ["iot", "web"],
+        )
+        self.assertEqual(
+            self.client.get("/api/tesis/").data["results"][0]["palabras_clave"],
+            ["iot", "web"],
+        )
+
+    def test_me_y_login_con_objetos_anidados_y_nulos(self):
+        self.login(self.alumno)
+        datos = self.client.get("/api/auth/me/").data
+        self.assertEqual(datos["carrera"]["nombre"], self.ap.nombre)
+        self.assertEqual(datos["sede"], {"id": self.sede.id, "nombre": "Arica"})
+        self.assertIsNone(datos["area"])
+        self.login(self.director)
+        datos = self.client.get("/api/auth/me/").data
+        self.assertIsNone(datos["carrera"])
+        self.assertEqual(datos["area"]["id"], self.area.id)
+        self.client.force_authenticate(None)
+        self.autorizar(self.alumno)
+        self.codigo(self.alumno)
+        r = self.client.post(
+            "/api/auth/verificar-codigo/",
+            {"email": self.alumno.email, "codigo": "123456"},
+        )
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data["usuario"]["carrera"]["nombre"], self.ap.nombre)
+
+    def test_autorizados_ids_en_escritura_objetos_en_lectura_y_errores_legibles(self):
+        self.login(self.admin)
+        r = self.client.post(
+            "/api/admin/autorizados/",
+            {
+                "email": "nuevo@inacapmail.cl",
+                "nombre_completo": "Nuevo",
+                "rol": "ESTUDIANTE",
+                "carrera": self.ap.id,
+                "sede": self.sede.id,
+            },
+        )
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data["carrera"]["codigo"], "AP")
+        pk = r.data["id"]
+        r = self.client.patch(f"/api/admin/autorizados/{pk}/", {"carrera": self.iei.id})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data["carrera"]["codigo"], "IEI")
+        self.assertEqual(
+            self.client.get("/api/admin/autorizados/").data["results"][0]["sede"][
+                "nombre"
+            ],
+            "Arica",
+        )
+        filas = [["no-es-email", "", "Inválido", "ESTUDIANTE", "AP", "", "Arica"]]
+        r = self.client.post(
+            "/api/admin/autorizados/importar/",
+            {"archivo": self.excel(filas)},
+            format="multipart",
+        )
+        self.assertEqual(len(r.data["errores"]), 1)
+        motivo = r.data["errores"][0]["motivo"]
+        self.assertTrue(motivo.startswith("email: "), motivo)
+        self.assertNotIn("ErrorDetail", motivo)
+        self.assertNotIn("{'", motivo)
+
+    def test_marca_pdf_con_origen_desplazado(self):
+        original = pdf_demo("Origen desplazado")
+        lector = PdfReader(original)
+        escritor = PdfWriter()
+        for pagina in lector.pages:
+            pagina.mediabox.lower_left = (50, 50)
+            pagina.mediabox.upper_right = (500, 750)
+            escritor.add_page(pagina)
+        salida = BytesIO()
+        escritor.write(salida)
+        tesis = self.tesis(pdf=SimpleUploadedFile("desplazado.pdf", salida.getvalue()))
+        posiciones = []
+
+        def visitar(texto, cm, tm, fuente, tamano):
+            if "Prohibida su reproducción" in texto or "Consultado por" in texto:
+                posiciones.append((texto, cm[4] + tm[4], cm[5] + tm[5]))
+
+        with tesis.pdf_marcado.open("rb") as marcado:
+            lector = PdfReader(marcado)
+            self.assertEqual(tuple(lector.pages[0].mediabox), (50, 50, 500, 750))
+            self.assertEqual(len(lector.pages), 2)
+            for pagina in lector.pages:
+                pagina.extract_text(visitor_text=visitar)
+            self.assertEqual([pos[2] for pos in posiciones], [62, 62])
+        with tesis.pdf_marcado.open("rb") as marcado:
+            salida = aplicar_marca_lector(marcado, self.alumno, "127.0.0.1")
+        posiciones.clear()
+        pagina = PdfReader(salida).pages[0]
+        texto = pagina.extract_text(visitor_text=visitar)
+        self.assertIn("INACAP", texto)
+        self.assertIn(self.alumno.email, texto)
+        lector_pos = [p for p in posiciones if "Consultado por" in p[0]]
+        self.assertEqual((lector_pos[0][1], lector_pos[0][2]), (62, 738))
+
+    def test_serializacion_detalle_sin_n_mas_uno(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        from types import SimpleNamespace
+        from .permisos import visibles
+        from .serializers import TesisDetalleSerializer
+
+        for i in range(4):
+            tesis = self.tesis(
+                titulo=f"Consulta {i}", usuario=self.alumno, publicar=False
+            )
+            tesis.estado = Estado.RECHAZADA
+            tesis.save()
+            MaterialAdicional.objects.create(
+                tesis=tesis,
+                tipo="REPOSITORIO",
+                titulo="Repo",
+                url="https://github.com/demo/demo",
+            )
+
+        def medir(limite):
+            qs = (
+                Tesis.objects.select_related(
+                    "carrera__area", "sede", "subido_por", "revisado_por"
+                )
+                .prefetch_related("autores", "materiales")
+                .order_by("id")[:limite]
+            )
+            with CaptureQueriesContext(connection) as consultas:
+                datos = TesisDetalleSerializer(
+                    qs, many=True, context={"request": SimpleNamespace(user=self.otro)}
+                ).data
+                self.assertEqual(len(datos), limite)
+            return len(consultas)
+
+        self.assertEqual(medir(1), medir(4))
+
+    def test_seed_coherente_idempotente_y_reset_archivos(self):
+        from django.core.management import call_command
+        from pathlib import Path
+
+        def sembrar(reset=False):
+            with self.captureOnCommitCallbacks(execute=True):
+                call_command(
+                    "seed_demo",
+                    con_ejemplos=True,
+                    reset_ejemplos=reset,
+                    stdout=__import__("io").StringIO(),
+                )
+
+        sembrar()
+        ejemplos = Tesis.objects.filter(titulo__startswith="Demo ")
+        self.assertEqual(ejemplos.count(), 15)
+        self.assertEqual(ejemplos.filter(estado=Estado.PUBLICADA).count(), 11)
+        self.assertEqual(ejemplos.filter(estado=Estado.EN_REVISION).count(), 3)
+        self.assertEqual(ejemplos.filter(estado=Estado.RECHAZADA).count(), 1)
+        for tesis in ejemplos.select_related("subido_por"):
+            self.assertEqual(tesis.subido_por.carrera_id, tesis.carrera_id)
+            self.assertEqual(
+                tesis.subido_por.rol,
+                Rol.COORDINADOR if tesis.estado == Estado.PUBLICADA else Rol.ESTUDIANTE,
+            )
+            for autor in tesis.autores.select_related("usuario"):
+                if autor.usuario:
+                    self.assertEqual(autor.usuario.carrera_id, tesis.carrera_id)
+        alumno_iei = Usuario.objects.get(email="demo1@inacapmail.cl")
+        self.assertEqual(alumno_iei.carrera.codigo, "IEI")
+        self.login(alumno_iei)
+        r = self.client.get("/api/tesis/?page_size=48")
+        self.assertGreater(r.data["count"], 0)
+        self.assertTrue(all(t["carrera"]["codigo"] == "IEI" for t in r.data["results"]))
+        propias = self.client.get("/api/tesis/mis-tesis/").data["results"]
+        rechazada = next(t for t in propias if t["estado"] == Estado.RECHAZADA)
+        self.assertTrue(rechazada["puede_reenviar"])
+        self.assertTrue(rechazada["observacion_revision"])
+        coordinador = Usuario.objects.get(email="demo5@inacapmail.cl")
+        self.login(coordinador)
+        pendientes = self.client.get("/api/tesis/pendientes/").data
+        self.assertGreater(pendientes["count"], 0)
+        self.assertTrue(
+            all(t["carrera"]["codigo"] == "IEI" for t in pendientes["results"])
+        )
+        sembrar()
+        self.assertEqual(ejemplos.count(), 15)
+        anterior = set(ejemplos.values_list("pdf_original", flat=True)) | set(
+            ejemplos.values_list("pdf_marcado", flat=True)
+        )
+        sembrar(True)
+        self.assertEqual(ejemplos.count(), 15)
+        self.assertTrue(all(not privado.exists(nombre) for nombre in anterior))
+        sembrar(True)
+        self.assertEqual(ejemplos.count(), 15)
+        self.assertEqual(len(list(Path(self.directorio).rglob("*.pdf"))), 30)

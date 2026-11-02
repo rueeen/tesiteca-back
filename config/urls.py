@@ -9,7 +9,7 @@ from usuarios.views import (
     AutorizadosViewSet,
 )
 from tesis.views import TesisViewSet, MaterialViewSet
-from academico.views import Sedes, Areas, Carreras, Anios, Profesores
+from academico.views import Sedes, Areas, Carreras, Anios, Profesores, CatalogoTipos
 
 router = DefaultRouter()
 router.register("tesis", TesisViewSet, basename="tesis")
@@ -25,6 +25,7 @@ urlpatterns = [
     path("api/catalogos/areas/", Areas.as_view()),
     path("api/catalogos/carreras/", Carreras.as_view()),
     path("api/catalogos/anios/", Anios.as_view()),
+    path("api/catalogos/tipos/", CatalogoTipos.as_view()),
     path("api/catalogos/profesores-guia/", Profesores.as_view()),
     path("api/", include(router.urls)),
 ]

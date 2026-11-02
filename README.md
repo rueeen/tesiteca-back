@@ -18,7 +18,7 @@ python manage.py runserver
 
 No versionar `.env`, SQLite ni los archivos privados. `SECRET_KEY` es obligatorio, incluso en desarrollo. Los valores de entorno del proceso tienen prioridad sobre `.env`. La configuración local preparada en la nube usa `/workspace/venv-tesiteca`; activar con `source /workspace/venv-tesiteca/bin/activate` desde `/workspace/tesiteca-back`.
 
-`seed_demo` es idempotente: crea Arica, el área y las carreras IEI/AP. `SEED_ADMIN_EMAIL`, si se configura con un correo institucional, agrega ese ADMIN a la lista blanca. `--con-ejemplos` agrega 15 tesis publicadas de 5–10 páginas y cuatro personas ficticias (`demo1` a `demo4` en `@inacapmail.cl`; demo4 es coordinador AP). Los enlaces de repositorios de ejemplo son ficticios. No cargar ejemplos en producción.
+`seed_demo` es idempotente: crea Arica, el área y las carreras IEI/AP. `SEED_ADMIN_EMAIL`, si se configura con un correo institucional, agrega ese ADMIN a la lista blanca. `--con-ejemplos` agrega 15 tesis de 5–10 páginas (11 publicadas, 3 en revisión y 1 rechazada) y seis personas ficticias. Cada tesis pertenece a la carrera de quien la sube y de sus autores vinculados. `--reset-ejemplos` elimina las tesis cuyo título empieza por `Demo ` y sus archivos antes de regenerar los ejemplos; usarlo para actualizar el seed antiguo. Los enlaces de repositorios de ejemplo son ficticios. No cargar ejemplos en producción.
 
 ## Variables
 
@@ -66,9 +66,9 @@ Roles: `ESTUDIANTE`, `COORDINADOR`, `DIRECTOR`, `ADMIN`. Carrera obligatoria par
 
 ## Biblioteca y flujo editorial
 
-- Catálogos autenticados: `/api/catalogos/sedes/`, `areas/`, `carreras/`, `anios/`, `profesores-guia/`.
+- Catálogos autenticados: `/api/catalogos/sedes/`, `areas/`, `carreras/`, `tipos/`, `anios/`, `profesores-guia/`.
 - `GET /api/tesis/`: solo publicaciones visibles. Busca con `search`; `en_contenido=true` incluye texto del PDF. Filtros: `carrera`, `sede`, `tipo`, `anio`, `anio_desde`, `anio_hasta`, `profesor_guia`, `palabra_clave`, `tiene_repositorio`. Orden por `anio`, `titulo`, `fecha_publicacion` con prefijo `-` opcional. Paginación de 12, máximo 48 con `page_size`.
-- `POST /api/tesis/`: multipart con `titulo`, `resumen`, `palabras_clave` separadas por comas, `tipo` (`TESIS`, `PROYECTO_TITULO`, `INFORME_PRACTICA`), `anio`, `semestre` opcional (1 o 2), IDs de `carrera` y `sede`, `profesor_guia`, `pdf`, `autores` (JSON `[{"nombre_completo":"...","email":"..."}]`) y `repositorio_url` opcional. `publicar=true` permite publicación directa para coordinador/director/admin dentro de su ámbito. Estudiantes siempre envían a revisión y se agregan como autores vinculados.
+- `POST /api/tesis/`: multipart con `titulo`, `resumen`, `palabras_clave` como texto separado por comas o lista JSON, `tipo` (`TESIS`, `PROYECTO_TITULO`, `INFORME_PRACTICA`), `anio`, `semestre` opcional (1 o 2), ID de `carrera` y `sede` opcional (por defecto la del usuario o la única sede activa), `profesor_guia`, `pdf`, `autores` (JSON `[{"nombre_completo":"...","email":"..."}]`) y `repositorio_url` opcional. `publicar=true` permite publicación directa para coordinador/director/admin dentro de su ámbito. Estudiantes siempre envían a revisión y se agregan como autores vinculados.
 - `GET/PATCH/DELETE /api/tesis/{id}/`: detalle y edición. Estudiantes solo editan/eliminan sus tesis en BORRADOR o RECHAZADA. Coordinadores/directores administran su ámbito; ADMIN todo. La carrera de una tesis existente no se cambia. Reemplazar PDF regenera hash, texto y marcas. Cambiar año regenera el pie de página.
 - `GET /api/tesis/mis-tesis/`: subidas y autorías vinculadas, todos los estados. `GET /api/tesis/pendientes/`: revisión del ámbito del funcionario.
 - `POST /api/tesis/{id}/aprobar/`, `rechazar/` (JSON `{"observacion":"..."}` obligatorio) y `reenviar/`. Aprobar/rechazar requiere EN_REVISION; reenviar requiere autor y estado BORRADOR/RECHAZADA.
@@ -93,7 +93,7 @@ python manage.py makemigrations --check --dry-run
 python manage.py test
 ```
 
-Las pruebas usan SQLite temporal, correo en memoria y archivos aislados: login/JWT, límites y expiración, importación/upsert y permisos, visibilidad, revisión, materiales, PDF cifrado/duplicado, rotación, marcas, descarga autenticada y rollback. El seed se puede ejecutar dos veces sin duplicar las tesis de ejemplo.
+Las pruebas usan SQLite temporal, correo en memoria y archivos aislados: login/JWT, límites y expiración, importación/upsert y permisos, visibilidad, revisión, materiales, PDF cifrado/duplicado, rotación, marcas, descarga autenticada y rollback. El seed se puede ejecutar dos veces sin duplicar las tesis de ejemplo, también con `--reset-ejemplos`.
 
 ## PythonAnywhere
 
@@ -116,3 +116,94 @@ application = get_wsgi_application()
 6. Recargar la app y comprobar login, biblioteca y PDF autenticado. Configurar límites de subida del hosting para los tamaños elegidos, SMTP permitido por el plan y HTTPS. Respaldar SQLite y archivos privados; no usar `runserver` en producción. Revisar `python manage.py check --deploy` y activar cookies seguras/redirección HTTPS según la configuración real del proxy del hosting.
 
 El despliegue real en PythonAnywhere y el envío SMTP requieren la cuenta y configuración del propietario; no forman parte de la validación local.
+
+
+## Usuarios demo
+
+| Correo | Rol | Carrera / área |
+|---|---|---|
+| demo1@inacapmail.cl | ESTUDIANTE | IEI |
+| demo2@inacapmail.cl | ESTUDIANTE | IEI |
+| demo3@inacapmail.cl | ESTUDIANTE | AP |
+| demo4@inacapmail.cl | COORDINADOR | AP |
+| demo5@inacapmail.cl | COORDINADOR | IEI |
+| demo6@inacapmail.cl | DIRECTOR | Informática, Ciberseguridad y Telecomunicaciones |
+
+Ingresar mediante código de correo (consola en desarrollo). `demo1` tiene una tesis rechazada con observación para probar el reenvío. Hay pendientes para los coordinadores de ambas carreras. El comando imprime esta tabla al terminar.
+
+Para reemplazar las tesis del esquema anterior y limpiar sus PDFs:
+
+```bash
+python manage.py migrate
+python manage.py seed_demo --con-ejemplos --reset-ejemplos
+```
+
+## Contrato de la API
+
+Objetos reutilizables:
+
+```json
+// CarreraMini
+{ "id": 1, "nombre": "Ingeniería en Informática", "codigo": "IEI", "area": 1, "permite_repositorio": true }
+// Mini (sede, área, tipo)
+{ "id": 1, "nombre": "Arica" }          // tipo usa id = código: { "id": "TESIS", "nombre": "Tesis" }
+// UsuarioMini
+{ "id": 4, "nombre_completo": "Persona ficticia 4", "email": "demo4@inacapmail.cl" }
+```
+
+### `GET /api/auth/me/` y `usuario` en la respuesta de `verificar-codigo/`
+```json
+{ "id": 1, "email": "...", "rut": "", "nombre_completo": "...", "rol": "ESTUDIANTE",
+  "carrera": CarreraMini | null, "area": Mini | null, "sede": Mini | null }
+```
+
+### Catálogos
+- `GET /api/catalogos/carreras/` → `[CarreraMini + "extensiones_material"]` (como hoy).
+- **Nuevo** `GET /api/catalogos/tipos/` → `[{ "id": "TESIS", "nombre": "Tesis" }, { "id": "PROYECTO_TITULO", "nombre": "Proyecto de título" }, { "id": "INFORME_PRACTICA", "nombre": "Informe de práctica" }]` (generado desde los `choices` del modelo).
+- `GET /api/catalogos/profesores-guia/` → `["Ana Pérez", ...]` (lista de strings, sin cambios).
+
+### Listado `GET /api/tesis/` (paginado `{count, next, previous, results}`)
+```json
+{ "id": 7, "titulo": "...", "resumen": "...(≤280)", "autores": ["Nombre 1", "Nombre 2"],
+  "carrera": CarreraMini, "anio": 2025, "tipo": { "id": "TESIS", "nombre": "Tesis" },
+  "profesor_guia": "Ana Pérez", "palabras_clave": ["web", "educación"],
+  "num_paginas": 7, "tiene_repositorio": true }
+```
+
+### Detalle `GET /api/tesis/{id}/` — también usado en cada item de `mis-tesis/` y `pendientes/`
+```json
+{ "id": 7, "titulo": "...", "resumen": "...", "palabras_clave": ["web", "educación"],
+  "tipo": { "id": "TESIS", "nombre": "Tesis" }, "anio": 2025, "semestre": 1,
+  "carrera": CarreraMini, "sede": Mini, "profesor_guia": "...",
+  "estado": "EN_REVISION", "estado_nombre": "En revisión", "observacion_revision": "",
+  "subido_por": UsuarioMini, "revisado_por": UsuarioMini | null,
+  "fecha_publicacion": "...", "num_paginas": 7, "tamano_bytes": 12345, "creado": "...", "actualizado": "...",
+  "autores": [{ "nombre_completo": "...", "email": "..." }],
+  "materiales": [{ "id": 3, "tipo": "REPOSITORIO", "titulo": "Repositorio", "descripcion": "",
+                   "url": "https://github.com/..." /* omitido si restringido */,
+                   "solo_carrera": true, "restringido": false, "creado": "..." }],
+  "pdf": "/api/tesis/7/pdf/",
+  "puede_editar": false, "puede_revisar": false, "puede_reenviar": false }
+```
+- `puede_editar` = `permisos.edita(usuario, tesis)`.
+- `puede_revisar` = `permisos.revisa(usuario, tesis) and tesis.estado == EN_REVISION`.
+- `puede_reenviar` = el usuario es autor/subió la tesis y está en BORRADOR o RECHAZADA.
+
+### Escritura `POST /api/tesis/` y `PATCH /api/tesis/{id}/` (multipart)
+| Campo | Formato |
+|---|---|
+| `titulo`, `resumen`, `profesor_guia` | texto |
+| `tipo` | código (`TESIS`, …) |
+| `carrera` | id |
+| `sede` | id **opcional**: si no viene, usar `usuario.sede`; si el usuario no tiene sede y hay **una sola** sede activa, usar esa; si no, error de validación en `sede` |
+| `anio`, `semestre` | número |
+| `palabras_clave` | aceptar **string separado por comas** (`"iot, web"`) **o** JSON de lista (`'["iot","web"]'`). Normalizar: trim, quitar vacíos, quitar duplicados sin importar mayúsculas, guardar como `"iot,web"` |
+| `autores` | JSON `[{"nombre_completo": "...", "email": "..."}]` (como hoy) |
+| `pdf` | archivo (obligatorio al crear) |
+| `repositorio_url` | URL GitHub opcional (como hoy) |
+| `publicar` | `"true"/"false"` (como hoy) |
+
+La respuesta de `POST`/`PATCH` es el **detalle** del contrato.
+
+### Autorizados `GET /api/admin/autorizados/`
+Cada item en lectura: `carrera`: CarreraMini | null, `area`: Mini | null, `sede`: Mini | null (en escritura siguen aceptando IDs). Implementarlo en `to_representation` del `AutorizadoSerializer`.
