@@ -4,6 +4,7 @@ import tempfile
 from io import BytesIO
 from unittest.mock import patch
 from django.test import override_settings
+from django.conf import settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.cache import cache
 from django.core import mail
@@ -55,7 +56,11 @@ def pdf_demo(texto="Documento de prueba", rotado=False):
             "django_filters.rest_framework.DjangoFilterBackend",
             "rest_framework.filters.OrderingFilter",
         ],
-        "DEFAULT_THROTTLE_RATES": {"codigo": "1000/min"},
+        "DEFAULT_THROTTLE_RATES": {
+            "codigo": "1000/min",
+            "refresh": "1000/min",
+            "ticket": "1000/min",
+        },
     },
 )
 class BackendTests(APITestCase):
@@ -185,12 +190,15 @@ class BackendTests(APITestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn("access", r.data)
         token = r.data["access"]
-        refresh = r.data["refresh"]
+        self.assertNotIn("refresh", r.data)
+        refresh = r.cookies[settings.REFRESH_COOKIE_NAME].value
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
         self.assertEqual(self.client.get("/api/auth/me/").data["rol"], Rol.ESTUDIANTE)
         self.client.credentials()
         self.assertEqual(
-            self.client.post("/api/auth/refresh/", {"refresh": refresh}).status_code,
+            self.client.post(
+                "/api/auth/refresh/", HTTP_X_REQUESTED_WITH="XMLHttpRequest"
+            ).status_code,
             200,
         )
         self.assertEqual(
@@ -974,3 +982,199 @@ class BackendTests(APITestCase):
         sembrar(True)
         self.assertEqual(ejemplos.count(), 15)
         self.assertEqual(len(list(Path(self.directorio).rglob("*.pdf"))), 30)
+
+    def test_notificaciones_revision_aprobacion_rechazo_y_reenvio(self):
+        from notificaciones.models import Notificacion, TipoNotificacion
+
+        tesis = self.tesis(usuario=self.alumno, publicar=False)
+        destinatarios = set(
+            Notificacion.objects.filter(
+                tipo=TipoNotificacion.TESIS_EN_REVISION
+            ).values_list("usuario_id", flat=True)
+        )
+        self.assertEqual(destinatarios, {self.coordinador.id, self.director.id})
+        tesis.autores.create(
+            nombre_completo=self.otro.nombre_completo,
+            email=self.otro.email,
+            usuario=self.otro,
+        )
+        self.login(self.coordinador)
+        self.assertEqual(
+            self.client.post(
+                f"/api/tesis/{tesis.pk}/rechazar/",
+                {"observacion": "Corregir referencias"},
+            ).status_code,
+            200,
+        )
+        rechazadas = Notificacion.objects.filter(tipo=TipoNotificacion.TESIS_RECHAZADA)
+        self.assertEqual(
+            set(rechazadas.values_list("usuario_id", flat=True)),
+            {self.alumno.id, self.otro.id},
+        )
+        self.assertIn("Corregir referencias", rechazadas.first().mensaje)
+        self.login(self.alumno)
+        self.assertEqual(
+            self.client.post(f"/api/tesis/{tesis.pk}/reenviar/").status_code, 200
+        )
+        self.assertEqual(
+            set(
+                Notificacion.objects.filter(
+                    tipo=TipoNotificacion.TESIS_REENVIADA
+                ).values_list("usuario_id", flat=True)
+            ),
+            {self.coordinador.id, self.director.id},
+        )
+        self.login(self.coordinador)
+        self.assertEqual(
+            self.client.post(f"/api/tesis/{tesis.pk}/aprobar/").status_code, 200
+        )
+        self.assertEqual(
+            set(
+                Notificacion.objects.filter(
+                    tipo=TipoNotificacion.TESIS_APROBADA
+                ).values_list("usuario_id", flat=True)
+            ),
+            {self.alumno.id, self.otro.id},
+        )
+
+    def test_fallo_ws_y_smtp_no_rompe_aprobacion(self):
+        from notificaciones.models import Notificacion, TipoNotificacion
+        from channels.layers import get_channel_layer
+        from unittest.mock import AsyncMock
+
+        tesis = self.tesis(usuario=self.alumno, publicar=False)
+        self.login(self.coordinador)
+        with override_settings(NOTIFICACIONES_WS=True, NOTIFICAR_POR_CORREO=True):
+            with patch.object(
+                get_channel_layer(),
+                "group_send",
+                new=AsyncMock(side_effect=RuntimeError("Redis caído")),
+            ):
+                with patch(
+                    "notificaciones.servicios.send_mail",
+                    side_effect=OSError("SMTP caído"),
+                ):
+                    with self.assertLogs("notificaciones.servicios", level="ERROR"):
+                        with self.captureOnCommitCallbacks(execute=True):
+                            r = self.client.post(f"/api/tesis/{tesis.pk}/aprobar/")
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(
+            Notificacion.objects.filter(
+                usuario=self.alumno, tipo=TipoNotificacion.TESIS_APROBADA
+            ).exists()
+        )
+
+    def test_notificar_deduplica_omite_actor_inactivos_y_rollback(self):
+        from notificaciones.servicios import notificar
+        from notificaciones.models import Notificacion
+        from django.db import transaction
+
+        self.otro.is_active = False
+        self.otro.save()
+        with override_settings(NOTIFICACIONES_WS=False, NOTIFICAR_POR_CORREO=True):
+            with self.captureOnCommitCallbacks(execute=True):
+                creadas = notificar(
+                    [self.alumno, self.alumno, self.coordinador, self.otro],
+                    "TESIS_APROBADA",
+                    "Aprobada",
+                    "Mensaje",
+                    "/tesis/1",
+                    actor=self.coordinador,
+                )
+        self.assertEqual(len(creadas), 1)
+        self.assertEqual(creadas[0].usuario_id, self.alumno.id)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn("/tesis/1", mail.outbox[0].body)
+        with self.assertRaises(RuntimeError):
+            with transaction.atomic():
+                notificar(
+                    [self.alumno],
+                    "TESIS_APROBADA",
+                    "No persistir",
+                    "Mensaje",
+                    "/tesis/2",
+                )
+                raise RuntimeError("Revertir")
+        self.assertEqual(Notificacion.objects.count(), 1)
+
+    def test_api_notificaciones_propias_y_polling_sin_ws(self):
+        from notificaciones.models import Notificacion
+
+        self.login(self.alumno)
+        propias = [
+            Notificacion.objects.create(
+                usuario=self.alumno,
+                tipo="TESIS_APROBADA",
+                titulo=f"Título {i}",
+                mensaje="Mensaje",
+                enlace="/tesis/1",
+            )
+            for i in range(3)
+        ]
+        ajena = Notificacion.objects.create(
+            usuario=self.otro,
+            tipo="TESIS_APROBADA",
+            titulo="Ajena",
+            mensaje="Mensaje",
+            enlace="/tesis/1",
+        )
+        with override_settings(NOTIFICACIONES_WS=False):
+            self.assertEqual(
+                self.client.get("/api/notificaciones/resumen/").data,
+                {"no_leidas": 3, "ultima_id": propias[-1].id},
+            )
+            r = self.client.get(
+                f"/api/notificaciones/?leida=false&desde_id={propias[0].id}"
+            )
+            self.assertEqual(
+                [n["id"] for n in r.data["results"]], [propias[2].id, propias[1].id]
+            )
+            self.assertEqual(
+                self.client.post(f"/api/notificaciones/{ajena.pk}/leer/").status_code,
+                404,
+            )
+            self.assertEqual(
+                self.client.post(
+                    f"/api/notificaciones/{propias[0].pk}/leer/"
+                ).status_code,
+                204,
+            )
+            self.assertEqual(
+                self.client.post("/api/notificaciones/leer-todas/").data,
+                {"actualizadas": 2},
+            )
+            self.assertEqual(
+                self.client.get("/api/notificaciones/resumen/").data["no_leidas"], 0
+            )
+            self.assertEqual(
+                self.client.get("/api/notificaciones/?leida=true").data["count"], 3
+            )
+            self.assertEqual(
+                self.client.get("/api/notificaciones/?desde_id=abc").status_code, 400
+            )
+        self.client.force_authenticate(None)
+        self.assertEqual(self.client.get("/api/notificaciones/").status_code, 401)
+
+    def test_importacion_activo_false_revoca_sesiones(self):
+        from rest_framework_simplejwt.tokens import RefreshToken
+        from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken
+
+        autorizado = self.autorizar(self.alumno)
+        token = RefreshToken.for_user(self.alumno)
+        self.login(self.admin)
+        csv = (
+            "email,rut,nombre_completo,rol,carrera_codigo,area,sede,activo\n"
+            + f"{self.alumno.email},,Alumno,ESTUDIANTE,AP,,Arica,false\n"
+        )
+        r = self.client.post(
+            "/api/admin/autorizados/importar/",
+            {"archivo": SimpleUploadedFile("lista.csv", csv.encode())},
+            format="multipart",
+        )
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["actualizados"], 1)
+        self.alumno.refresh_from_db()
+        self.assertFalse(self.alumno.is_active)
+        self.assertTrue(
+            BlacklistedToken.objects.filter(token__jti=token["jti"]).exists()
+        )
