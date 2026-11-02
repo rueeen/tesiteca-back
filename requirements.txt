@@ -10,3 +10,5 @@ openpyxl==3.1.5
 channels==4.3.2
 channels-redis==4.3.0
 uvicorn[standard]==0.54.0
+# Requerido por channels.testing; el servidor de producción sigue siendo Uvicorn.
+daphne==4.2.3

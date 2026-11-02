@@ -90,7 +90,7 @@ Se valida firma `%PDF`, tamaño, lectura completa, ausencia de cifrado y SHA-256
 ```bash
 python manage.py check
 python manage.py makemigrations --check --dry-run
-pip install -r requirements-dev.txt
+pip install -r requirements.txt
 python manage.py test
 ```
 
@@ -140,6 +140,18 @@ python manage.py seed_demo --con-ejemplos --reset-ejemplos
 ```
 
 ## Contrato de la API
+
+### `POST /api/auth/refresh/`
+
+Requiere `X-Requested-With: XMLHttpRequest` y, si se envía `Origin`, debe estar en `CSRF_TRUSTED_ORIGINS` (si no, 403). Lee exclusivamente la cookie httpOnly; ignora el body.
+
+| Situación | Respuesta |
+|---|---|
+| Sin cookie | `204 No Content`, sin body: no hay sesión que restaurar |
+| Cookie válida | `200` con `{access, usuario}` y cookie de refresh rotada |
+| Cookie inválida, vencida, en lista negra o usuario desactivado/no autorizado | `401` y cookie eliminada |
+
+El frontend debe tratar `204` como visitante sin sesión y `401` como sesión inválida. Ninguna respuesta incluye refresh en el body.
 
 Objetos reutilizables:
 
@@ -212,9 +224,9 @@ Cada item en lectura: `carrera`: CarreraMini | null, `area`: Mini | null, `sede`
 
 ## Sesiones seguras y cambios del frontend
 
-`verificar-codigo/` y `refresh/` responden exclusivamente `{access, usuario}`. La cookie `tesiteca_refresh` es httpOnly, SameSite=Strict, Path=/api/auth/, con Secure en producción y una vida de siete días. El access dura diez minutos por defecto. Cada refresh rota la cookie e invalida el token anterior. El frontend debe abandonar localStorage y borrar tokens antiguos durante la actualización.
+Al iniciar o renovar una sesión válida, `verificar-codigo/` y `refresh/` responden exclusivamente `{access, usuario}`. La cookie `tesiteca_refresh` es httpOnly, SameSite=Strict, Path=/api/auth/, con Secure en producción y una vida de siete días. El access dura diez minutos por defecto. Cada refresh rota la cookie e invalida el token anterior. El frontend debe abandonar localStorage y borrar tokens antiguos durante la actualización.
 
-Usar `credentials: "include"` en login, refresh y logout (también cuando en desarrollo la API tiene otro origen). Para restaurar sesión al cargar la página, llamar una sola vez a `POST /api/auth/refresh/`: devuelve access y usuario. Centralizar las renovaciones en una única petición concurrente; reusar un refresh rotado da 401. En refresh y logout enviar `X-Requested-With: XMLHttpRequest`; si se envía Origin, debe coincidir exactamente con `CSRF_TRUSTED_ORIGINS`. Se limitan a 30 peticiones por minuto por IP. `logout/` devuelve 204 y revoca la cookie aun con access vencido. Logout revoca el refresh; el access previamente emitido conserva su vida de diez minutos mientras el usuario esté activo.
+Usar `credentials: "include"` en login, refresh y logout (también cuando en desarrollo la API tiene otro origen). Para restaurar sesión al cargar la página, llamar una sola vez a `POST /api/auth/refresh/`: devuelve access y usuario si la cookie es válida, o 204 sin body si no hay cookie. Una cookie inválida mantiene el 401 y se elimina. Centralizar las renovaciones en una única petición concurrente; reusar un refresh rotado da 401. En refresh y logout enviar `X-Requested-With: XMLHttpRequest`; si se envía Origin, debe coincidir exactamente con `CSRF_TRUSTED_ORIGINS`. Se limitan a 30 peticiones por minuto por IP. `logout/` devuelve 204 y revoca la cookie aun con access vencido. Logout revoca el refresh; el access previamente emitido conserva su vida de diez minutos mientras el usuario esté activo.
 
 En herramientas como curl, conservar las cookies con `-c cookies.txt` al verificar el código y usar `-b cookies.txt -c cookies.txt -H 'X-Requested-With: XMLHttpRequest'` para renovar. No versionar ni compartir ese archivo. El cuerpo enviado a refresh se ignora.
 
@@ -236,7 +248,7 @@ Con `NOTIFICACIONES_WS=False`, el front debe usar polling. Con `True`, solicitar
 
 Al conectar se recibe `{tipo: "resumen", no_leidas, ultima_id}`. Cada aviso nuevo llega como `{tipo: "notificacion", notificacion: {...}}`. El cliente puede enviar `{tipo: "ping"}` y recibirá `{tipo: "pong"}`. Ante desconexión, recuperar el historial por REST. Si el polling devuelve varias páginas, recorrerlas antes de avanzar el cursor `desde_id`, para no perder avisos entre páginas.
 
-Para pruebas completas instalar también `pip install -r requirements-dev.txt`; Daphne se usa para `WebsocketCommunicator`, aunque el despliegue ASGI use Uvicorn.
+`pip install -r requirements.txt` incluye todo lo necesario para ejecutar las pruebas, incluido Daphne para `channels.testing.WebsocketCommunicator`. El despliegue ASGI sigue usando Uvicorn. `requirements-dev.txt` queda como alias de la misma instalación.
 
 ## Deploy en PythonAnywhere
 

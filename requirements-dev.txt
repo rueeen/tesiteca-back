@@ -1,3 +1,2 @@
+# Alias para instalación de desarrollo; incluye las dependencias de pruebas.
 -r requirements.txt
-# Necesario para channels.testing.WebsocketCommunicator.
-daphne==4.2.3
