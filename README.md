@@ -98,7 +98,7 @@ Las pruebas usan SQLite temporal, correo en memoria y archivos aislados: login/J
 
 ## Despliegue
 
-Consultar [DEPLOY.md](DEPLOY.md) para la cuenta gratuita de **rvavalencia**, con backend `https://rvavalencia.pythonanywhere.com` y frontend `https://tesiteca-inacap.netlify.app`. Usar `.env.produccion.example`, proxy Netlify firmado, WSGI sin WebSockets y mantenimiento mensual manual.
+Consultar [DEPLOY.md](DEPLOY.md) para la cuenta gratuita de **rvavalencia**, con backend `https://rvavalencia.pythonanywhere.com` y frontend `https://tesiteca.netlify.app`. Usar `.env.produccion.example`, proxy Netlify firmado, WSGI sin WebSockets y mantenimiento mensual manual.
 
 ## Usuarios demo
 
