@@ -1252,3 +1252,29 @@ class BackendTests(APITestCase):
             ).status_code,
             404,
         )
+
+    def test_normalizar_resumen_casos_normativos_e_idempotencia(self):
+        from pathlib import Path
+        from .texto import normalizar_resumen
+        import importlib
+
+        casos = json.loads(
+            (
+                Path(__file__).parent / "tests_fixtures" / "resumen_casos.json"
+            ).read_text()
+        )
+        migracion = importlib.import_module(
+            "tesis.migrations.0006_renormalizar_resumen"
+        )
+        self.assertEqual(len(casos), 10)
+        for caso in casos:
+            with self.subTest(id=caso["id"]):
+                resultado = normalizar_resumen(caso["entrada"])
+                self.assertEqual(resultado, caso["esperado"])
+                self.assertEqual(normalizar_resumen(resultado), resultado)
+                self.assertEqual(
+                    migracion.normalizar_resumen(caso["entrada"]), resultado
+                )
+                self.assertEqual(migracion.normalizar_resumen(resultado), resultado)
+        self.assertEqual(normalizar_resumen(None), "")
+        self.assertEqual(normalizar_resumen(""), "")

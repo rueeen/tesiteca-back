@@ -1,0 +1,52 @@
+[
+  {
+    "id": "pdf_pegado",
+    "entrada": "Trabajar con datos es vital para las empresas y\norganizaciones, que requieren analizarlos para tomar\ndecisiones. Para lograrlo se necesita un sistema.\nEn ocasiones se buscan soluciones que no son\nlas más óptimas.\nActualmente el hotel carece de un sistema.",
+    "esperado": "Trabajar con datos es vital para las empresas y organizaciones, que requieren analizarlos para tomar decisiones. Para lograrlo se necesita un sistema.\n\nEn ocasiones se buscan soluciones que no son las más óptimas.\n\nActualmente el hotel carece de un sistema."
+  },
+  {
+    "id": "guion_corte_minuscula",
+    "entrada": "El sistema per-\nmite automatizar procesos.",
+    "esperado": "El sistema permite automatizar procesos."
+  },
+  {
+    "id": "guion_compuesto_mayuscula",
+    "entrada": "Integra Arduino-\nESP32 y sensores.",
+    "esperado": "Integra Arduino-ESP32 y sensores."
+  },
+  {
+    "id": "vinetas",
+    "entrada": "Objetivos:\n- Analizar datos de\nventas\n- Diseñar el sistema\n1. Implementar\n2) Probar",
+    "esperado": "Objetivos:\n\n- Analizar datos de ventas\n\n- Diseñar el sistema\n\n1. Implementar\n\n2) Probar"
+  },
+  {
+    "id": "abreviatura_minuscula",
+    "entrada": "Se usaron librerías como pandas, numpy, etc.\ny otras herramientas.",
+    "esperado": "Se usaron librerías como pandas, numpy, etc. y otras herramientas."
+  },
+  {
+    "id": "crlf_nbsp_vacias",
+    "entrada": "  Primer párrafo\r\ncontinúa.\r\n\r\n\r\nSegundo\u00a0 párrafo.  ",
+    "esperado": "Primer párrafo continúa.\n\nSegundo párrafo."
+  },
+  {
+    "id": "signos_apertura",
+    "entrada": "¿Cómo mejorar la gestión?\n¿Por qué ahora?",
+    "esperado": "¿Cómo mejorar la gestión?\n\n¿Por qué ahora?"
+  },
+  {
+    "id": "cierre_parentesis",
+    "entrada": "Se detalla el diseño (ver anexo.)\nLuego se evaluó.",
+    "esperado": "Se detalla el diseño (ver anexo.)\n\nLuego se evaluó."
+  },
+  {
+    "id": "dos_puntos_minuscula",
+    "entrada": "Los módulos son:\nventas, bodega y caja.",
+    "esperado": "Los módulos son: ventas, bodega y caja."
+  },
+  {
+    "id": "vacio",
+    "entrada": "   \n\n ",
+    "esperado": ""
+  }
+]
