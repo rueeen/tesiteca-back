@@ -86,7 +86,7 @@ La carrera tiene duración de 2–10 semestres, editable en Django admin. El see
 
 Búsqueda `search` en título, resumen, palabras, autores y guía; `en_contenido=true` añade texto PDF. Filtros: `carrera,sede,region,nivel_formacion,tipo,anio,anio_desde,anio_hasta,profesor_guia,palabra_clave,tiene_repositorio`. Orden por año, título o fecha de publicación (prefijo `-` para descendente). Paginación de 12, máximo 48 con `page_size`.
 
-Listado: `id,titulo,resumen,autores` (nombres), `carrera` (objeto), `anio,tipo` (objeto), `periodo,periodo_texto,profesor_guia,palabras_clave` (lista), `num_paginas,tiene_repositorio`. El resumen de máximo 280 caracteres se corta por palabra y termina en «…» si se recorta.
+Listado: `id,titulo,resumen,autores` (nombres), `carrera` (objeto), `sede: SedeMini` (`id,nombre,ciudad,region:{id,nombre}`), `anio,tipo` (objeto), `periodo,periodo_texto,profesor_guia,palabras_clave` (lista), `num_paginas,tiene_repositorio`. El resumen de máximo 280 caracteres se corta por palabra y termina en «…» si se recorta.
 
 Detalle y elementos de `mis-tesis/`/`pendientes/`: además incluye resumen completo, sede anidada, estado/estado_nombre, observación, subido_por/revisado_por anidados, fechas, autores `{nombre_completo,email}`, materiales, `pdf` protegido y flags `puede_editar,puede_revisar,puede_reenviar`.
 
