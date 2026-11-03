@@ -56,3 +56,55 @@ print('Migración anterior → actual sin pérdida de usuarios, autorías, PDF n
                 timeout=60,
             )
         self.assertEqual(resultado.returncode, 0, resultado.stderr)
+
+    def test_renormalizar_desde_0005_aplicada(self):
+        codigo = """
+import os, json
+from pathlib import Path
+import django
+django.setup()
+from django.db import connection
+from django.db.migrations.executor import MigrationExecutor
+connection.settings_dict['NAME'] = os.environ['PRUEBA_MIGRACION_DB']
+ejecutor = MigrationExecutor(connection)
+previas = [('tesis', '0005_periodo_y_resumen'), ('usuarios', '0003_usuario_sede_obligatoria_no_admin'), ('academico', '0002_alter_sede_options_carrera_duracion_semestres_and_more')]
+ejecutor.migrate(previas)
+apps = ejecutor.loader.project_state(previas).apps
+sede = apps.get_model('academico', 'Sede').objects.create(nombre='Arica', ciudad='Arica')
+area = apps.get_model('academico', 'Area').objects.create(nombre='Informática')
+carrera = apps.get_model('academico', 'Carrera').objects.create(nombre='Ingeniería', codigo='IEI', area=area)
+u = apps.get_model('usuarios', 'Usuario').objects.create(email='migracion@inacap.cl', nombre_completo='Admin de prueba', rol='ADMIN')
+casos = json.loads(Path('tesis/tests_fixtures/resumen_casos.json').read_text())
+Tesis = apps.get_model('tesis', 'Tesis')
+for i, caso in enumerate(casos):
+    Tesis.objects.create(titulo=caso['id'], resumen=caso['entrada'], tipo='TESIS', anio=2026, periodo=2, carrera=carrera, sede=sede, subido_por=u, profesor_guia='Guía', pdf_original=f'IEI/{i}.pdf', pdf_marcado=f'IEI/{i}-marcado.pdf', hash_sha256=f'{i:064x}')
+ejecutor = MigrationExecutor(connection)
+ejecutor.migrate(ejecutor.loader.graph.leaf_nodes())
+from tesis.models import Tesis as TesisActual
+for caso in casos:
+    tesis = TesisActual.objects.get(titulo=caso['id'])
+    assert tesis.resumen == caso['esperado'], caso['id']
+    assert tesis.periodo == 2
+assert TesisActual.objects.count() == 10
+# La función congelada se puede reaplicar sin modificar los resultados.
+from importlib import import_module
+migracion = import_module('tesis.migrations.0006_renormalizar_resumen')
+migracion.renormalizar(ejecutor.loader.project_state(ejecutor.loader.graph.leaf_nodes()).apps, None)
+for caso in casos:
+    assert TesisActual.objects.get(titulo=caso['id']).resumen == caso['esperado']
+"""
+        with tempfile.TemporaryDirectory() as carpeta:
+            entorno = {
+                **os.environ,
+                "DJANGO_SETTINGS_MODULE": "config.settings",
+                "PRUEBA_MIGRACION_DB": str(Path(carpeta) / "version_0005.sqlite3"),
+            }
+            resultado = subprocess.run(
+                [sys.executable, "-c", codigo],
+                cwd=settings.BASE_DIR,
+                env=entorno,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        self.assertEqual(resultado.returncode, 0, resultado.stderr)

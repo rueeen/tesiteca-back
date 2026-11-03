@@ -476,3 +476,73 @@ class CuentasTests(APITestCase):
             self.assertEqual(r.status_code, 200)
             self.assertIsInstance(r.data, list)
             self.assertGreater(len(r.data), 0)
+
+    def extraer_enlace_texto(self, cuerpo):
+        import re
+        from urllib.parse import urlsplit, parse_qs
+
+        encontrado = re.search(r"https?://\S+", cuerpo)
+        self.assertIsNotNone(encontrado, cuerpo)
+        enlace = encontrado.group(0)
+        self.assertNotIn("&amp;", enlace)
+        return urlsplit(enlace), parse_qs(urlsplit(enlace).query)
+
+    def test_enlace_verificacion_extraido_del_correo_texto_funciona(self):
+        self.registrar()
+        self.assertEqual(len(mail.outbox), 1)
+        url, parametros = self.extraer_enlace_texto(mail.outbox[0].body)
+        self.assertEqual(url.path, "/verificar-correo")
+        self.assertEqual(set(parametros), {"token"})
+        r = self.client.post(
+            "/api/auth/verificar-correo/", {"token": parametros["token"][0]}
+        )
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["estado"], "PENDIENTE_APROBACION")
+
+    def test_enlace_recuperacion_extraido_del_correo_texto_funciona(self):
+        usuario = self.registrar()
+        self.verificar(usuario)
+        self.assertEqual(self.aprobar(usuario).status_code, 200)
+        mail.outbox.clear()
+        with self.captureOnCommitCallbacks(execute=True):
+            r = self.client.post("/api/auth/recuperar/", {"email": usuario.email})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(len(mail.outbox), 1)
+        url, parametros = self.extraer_enlace_texto(mail.outbox[0].body)
+        self.assertEqual(url.path, "/restablecer")
+        self.assertEqual(set(parametros), {"uid", "token"})
+        nueva = "Otra-clave-desde-correo-2026!"
+        r = self.client.post(
+            "/api/auth/restablecer/",
+            {
+                "uid": parametros["uid"][0],
+                "token": parametros["token"][0],
+                "password": nueva,
+                "password2": nueva,
+            },
+        )
+        self.assertEqual(r.status_code, 200, r.data)
+        usuario.refresh_from_db()
+        self.assertTrue(usuario.check_password(nueva))
+
+    def test_nombre_sin_escape_en_texto_y_con_escape_en_html(self):
+        from django.utils.html import escape
+
+        nombre = "O'Higgins & Cía"
+        usuario = self.registrar(nombre_completo=nombre)
+        self.verificar(usuario)
+        self.assertEqual(self.aprobar(usuario).status_code, 200)
+        with self.captureOnCommitCallbacks(execute=True):
+            self.client.post("/api/auth/recuperar/", {"email": usuario.email})
+        self.assertEqual(len(mail.outbox), 2)
+        for correo in mail.outbox:
+            with self.subTest(asunto=correo.subject):
+                self.assertIn(nombre, correo.body)
+                self.assertNotIn(str(escape(nombre)), correo.body)
+                html = next(
+                    contenido
+                    for contenido, tipo in correo.alternatives
+                    if tipo == "text/html"
+                )
+                self.assertIn(str(escape(nombre)), html)
+                self.assertNotIn(nombre, html)

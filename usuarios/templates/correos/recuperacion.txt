@@ -1,6 +1,8 @@
+{% autoescape off %}
 Hola {{ usuario.nombre_completo }},
 
 Recupera tu contraseña: {{ enlace }}
 
 El enlace es válido durante una hora.
 Si no fuiste tú, ignora este correo.
+{% endautoescape %}

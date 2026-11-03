@@ -165,3 +165,8 @@ Después pulsar **Reload** y desplegar el frontend compatible. La migración ren
 Solo Arica se crea automáticamente. El propietario carga las sedes oficiales con `python manage.py importar_sedes sedes.csv` (columnas `nombre,ciudad,region,orden`) o mediante el panel ADMIN. `docs/sedes_ejemplo.csv` contiene solo el formato de Arica. Las regiones pueden indicarse por nombre o número romano. `VISIBILIDAD_ENTRE_SEDES=True` permite a estudiantes ver publicaciones de su carrera en otras sedes; coordinadores/directores conservan alcance de sede.
 
 SMTP solo se utiliza para enlaces de verificación (48 h) y recuperación (1 h), más la prueba administrativa explícita. No se envían correos al aprobar o rechazar. Mantener `NOTIFICAR_APROBACION_POR_CORREO=False`; el aviso de solicitudes llega por polling. El mantenimiento mensual limpia también intentos de login y cuentas pendientes de verificación antiguas.
+
+
+## Corrección de enlaces y resúmenes (migración 0006)
+
+Aplicar `python manage.py migrate` y luego Reload. La migración `0006_renormalizar_resumen` reaplica la normalización normativa con una copia congelada del algoritmo; `0005` no se modifica. No puede reconstruir el texto original si una normalización anterior ya alteró sus saltos: esos registros requieren el texto fuente para corregirlos con fidelidad. Las nuevas cargas y ediciones usan el algoritmo corregido, con los diez casos compartidos en `tesis/tests_fixtures/resumen_casos.json`.

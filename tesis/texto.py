@@ -1,31 +1,46 @@
 import re
 
 
-def normalizar_resumen(texto):
-    lineas = texto.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+def normalizar_resumen(texto: str) -> str:
+    if not texto:
+        return ""
+    texto = (
+        texto.replace("\r\n", "\n")
+        .replace("\r", "\n")
+        .replace("\u00a0", " ")
+        .replace("\t", " ")
+    )
     parrafos = []
     actual = ""
-    for linea in lineas:
-        linea = re.sub(r"[^\S\n]+", " ", linea).strip()
+    for original in texto.split("\n"):
+        linea = original.strip()
         if not linea:
             if actual:
                 parrafos.append(actual)
                 actual = ""
-            continue
-        if not actual:
+        elif re.match(r"^([-•*]|\d{1,2}[.)])\s+", linea):
+            if actual:
+                parrafos.append(actual)
             actual = linea
-        elif actual.endswith("-") and linea[0].islower():
-            actual = actual[:-1] + linea
-        elif actual.endswith((".", "!", "?", ":", ";")) or re.match(
-            r"^(?:[-•*]|\d+[.)])(?:\s|$)", linea
-        ):
-            parrafos.append(actual)
+        elif not actual:
             actual = linea
+        elif actual.endswith("-") and len(actual) >= 2 and actual[-2].isalnum():
+            actual = (actual[:-1] if linea[0].islower() else actual) + linea
         else:
-            actual += " " + linea
+            cierre = actual.rstrip(")\"”»'")
+            termina_oracion = bool(cierre) and cierre[-1] in ".!?:;"
+            primero = linea[0]
+            empieza_mayuscula = (
+                primero in "¿¡\"“«'(" or primero.isdigit() or primero.isupper()
+            )
+            if termina_oracion and empieza_mayuscula:
+                parrafos.append(actual)
+                actual = linea
+            else:
+                actual += " " + linea
     if actual:
         parrafos.append(actual)
-    return "\n\n".join(parrafos)
+    return "\n\n".join(re.sub(r" {2,}", " ", parrafo) for parrafo in parrafos).strip()
 
 
 def resumen_breve(texto, limite=280):
