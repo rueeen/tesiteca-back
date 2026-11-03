@@ -23,7 +23,7 @@ class Tesis(models.Model):
         ],
     )
     anio = models.PositiveIntegerField()
-    semestre = models.PositiveSmallIntegerField(
+    periodo = models.PositiveSmallIntegerField(
         choices=[(1, "1"), (2, "2")], null=True, blank=True
     )
     carrera = models.ForeignKey("academico.Carrera", on_delete=models.PROTECT)

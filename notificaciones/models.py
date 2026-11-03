@@ -3,6 +3,7 @@ from django.db import models
 
 
 class TipoNotificacion(models.TextChoices):
+    SOLICITUD_ACCESO = "SOLICITUD_ACCESO", "Solicitud de acceso"
     TESIS_EN_REVISION = "TESIS_EN_REVISION", "Tesis en revisión"
     TESIS_APROBADA = "TESIS_APROBADA", "Tesis aprobada"
     TESIS_RECHAZADA = "TESIS_RECHAZADA", "Tesis rechazada"

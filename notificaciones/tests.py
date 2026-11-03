@@ -22,7 +22,7 @@ class WebSocketTests(TransactionTestCase):
     def setUp(self):
         cache.clear()
         self.usuario = Usuario.objects.create_user(
-            "socket@inacap.cl", nombre_completo="Socket"
+            "socket@inacap.cl", nombre_completo="Socket", rol="ADMIN"
         )
 
     def conectar(self, ticket, origen="http://localhost:5173", extra=""):

@@ -3,6 +3,8 @@ from .models import Tesis
 
 
 class FiltroTesis(django_filters.FilterSet):
+    nivel_formacion = django_filters.CharFilter(field_name="carrera__nivel_formacion")
+    region = django_filters.CharFilter(field_name="sede__region")
     anio_desde = django_filters.NumberFilter(field_name="anio", lookup_expr="gte")
     anio_hasta = django_filters.NumberFilter(field_name="anio", lookup_expr="lte")
     profesor_guia = django_filters.CharFilter(lookup_expr="icontains")

@@ -1,18 +1,31 @@
 from django.db.models.signals import post_save
 from django.dispatch import receiver
-from rest_framework_simplejwt.token_blacklist.models import (
-    OutstandingToken,
-    BlacklistedToken,
-)
-from .models import UsuarioAutorizado, Usuario
+from django.utils import timezone
+from .models import UsuarioAutorizado, Usuario, EstadoCuenta
 
 
 @receiver(post_save, sender=UsuarioAutorizado)
 def sincronizar_activacion(sender, instance, **kwargs):
+    from .cuentas import aprobar_cuenta, revocar_sesiones
+
     usuario = Usuario.objects.filter(email=instance.email).first()
     if usuario is None:
         return
-    Usuario.objects.filter(pk=usuario.pk).update(is_active=instance.activo)
     if not instance.activo:
-        for token in OutstandingToken.objects.filter(user=usuario):
-            BlacklistedToken.objects.get_or_create(token=token)
+        usuario.cambiar_estado(EstadoCuenta.DESACTIVADA)
+        revocar_sesiones(usuario)
+    elif usuario.estado_cuenta == EstadoCuenta.PENDIENTE_APROBACION:
+        aprobar_cuenta(
+            usuario,
+            {
+                "rol": instance.rol,
+                "carrera": instance.carrera,
+                "area": instance.area,
+                "sede": instance.sede,
+            },
+        )
+    elif (
+        usuario.estado_cuenta == EstadoCuenta.DESACTIVADA
+        and usuario.email_verificado_en
+    ):
+        usuario.cambiar_estado(EstadoCuenta.ACTIVA)

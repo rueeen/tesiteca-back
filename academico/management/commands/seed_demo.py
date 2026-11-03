@@ -24,7 +24,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **opciones):
         sede, _ = Sede.objects.get_or_create(
-            nombre="Arica", defaults={"ciudad": "Arica"}
+            nombre="Arica", defaults={"ciudad": "Arica", "region": "XV", "orden": 1}
         )
         area, _ = Area.objects.get_or_create(
             nombre="Informática, Ciberseguridad y Telecomunicaciones"
@@ -36,7 +36,13 @@ class Command(BaseCommand):
         ]:
             carrera, _ = Carrera.objects.update_or_create(
                 codigo=codigo,
-                defaults={"nombre": nombre, "area": area, "permite_repositorio": True},
+                defaults={
+                    "nombre": nombre,
+                    "area": area,
+                    "permite_repositorio": True,
+                    "nivel_formacion": "INGENIERIA" if codigo == "IEI" else "TECNICO",
+                    "duracion_semestres": 8 if codigo == "IEI" else 4,
+                },
             )
             carreras.append(carrera)
         email = config("SEED_ADMIN_EMAIL", default="").strip().lower()
@@ -85,6 +91,7 @@ class Command(BaseCommand):
 
             transaction.on_commit(limpiar, robust=True)
 
+    # AP: confirmar duración con la malla vigente.
     def crear_ejemplos(self, sede, area, carreras):
         iei, ap = carreras
         configuracion = [
@@ -111,9 +118,14 @@ class Command(BaseCommand):
             usuario, creado = Usuario.objects.update_or_create(
                 email=correo, defaults=datos
             )
+            from django.utils import timezone
+            from usuarios.models import EstadoCuenta
+
+            usuario.estado_cuenta = EstadoCuenta.ACTIVA
+            usuario.email_verificado_en = usuario.email_verificado_en or timezone.now()
             if creado:
                 usuario.set_unusable_password()
-                usuario.save()
+            usuario.save()
             personas.append(usuario)
 
         for i in range(15):
@@ -150,7 +162,7 @@ class Command(BaseCommand):
                 ][i % 3],
                 "tipo": "PROYECTO_TITULO",
                 "anio": 2021 + i % 6,
-                "semestre": 1 + i % 2,
+                "periodo": 1 + i % 2,
                 "carrera": carrera,
                 "sede": sede,
                 "profesor_guia": ["Ana Pérez", "Luis Soto", "María Rojas"][i % 3],

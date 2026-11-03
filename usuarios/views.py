@@ -1,151 +1,28 @@
 import csv
 import io
-import secrets
-import logging
-from datetime import timedelta
 from openpyxl import Workbook, load_workbook
 from django.conf import settings
-from django.contrib.auth.hashers import make_password, check_password
-from django.contrib.auth.models import update_last_login
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
 from rest_framework.permissions import BasePermission
 from .cookies import poner_refresh, borrar_refresh
-from django.core.mail import send_mail
 from django.db import transaction
 from django.http import HttpResponse
-from django.utils import timezone
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from rest_framework.throttling import ScopedRateThrottle
+from config.throttling import ThrottleIP
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from academico.models import Carrera, Area, Sede
-from .models import CodigoAcceso, UsuarioAutorizado, Usuario, ImportacionLote, Rol
+from .models import UsuarioAutorizado, Usuario, ImportacionLote, Rol, EstadoCuenta
 from .serializers import (
-    CorreoSerializer,
-    CodigoSerializer,
     UsuarioSerializer,
     AutorizadoSerializer,
 )
 from .permisos import GestionaAutorizados, puede_administrar
-
-MENSAJE = "Si el correo está autorizado, recibirás un código"
-
-
-class SolicitarCodigo(APIView):
-    permission_classes = [AllowAny]
-    throttle_classes = [ScopedRateThrottle]
-    throttle_scope = "codigo"
-
-    def post(self, request):
-        entrada = CorreoSerializer(data=request.data)
-        entrada.is_valid(raise_exception=True)
-        email = entrada.validated_data["email"]
-        ahora = timezone.now()
-        with transaction.atomic():
-            solicitudes = CodigoAcceso.objects.filter(
-                email=email, creado__gte=ahora - timedelta(minutes=10)
-            )
-            if solicitudes.count() >= 3:
-                return Response(
-                    {"detail": "Intenta nuevamente en 10 minutos"}, status=429
-                )
-            CodigoAcceso.objects.filter(email=email, usado=False).update(usado=True)
-            autorizado = UsuarioAutorizado.objects.filter(
-                email=email, activo=True
-            ).exists()
-            codigo = f"{secrets.randbelow(1000000):06d}"
-            # También contar solicitudes no autorizadas evita revelar la lista blanca por el límite.
-            CodigoAcceso.objects.create(
-                email=email,
-                codigo_hash=make_password(codigo),
-                expira_en=ahora + timedelta(minutes=10),
-                usado=not autorizado,
-            )
-            if autorizado:
-                try:
-                    send_mail(
-                        "Código de acceso a Biblioteca de Tesis",
-                        f"Tu código es {codigo}. Expira en 10 minutos.",
-                        settings.DEFAULT_FROM_EMAIL,
-                        [email],
-                    )
-                except Exception:
-                    # No revelar la lista blanca si el transporte de correo falla.
-                    logging.getLogger(__name__).error(
-                        "No se pudo enviar un código de acceso"
-                    )
-        return Response({"detail": MENSAJE})
-
-
-class VerificarCodigo(APIView):
-    permission_classes = [AllowAny]
-    throttle_classes = [ScopedRateThrottle]
-    throttle_scope = "codigo"
-
-    def post(self, request):
-        entrada = CodigoSerializer(data=request.data)
-        entrada.is_valid(raise_exception=True)
-        email = entrada.validated_data["email"]
-        with transaction.atomic():
-            codigo = (
-                CodigoAcceso.objects.select_for_update()
-                .filter(
-                    email=email,
-                    usado=False,
-                    expira_en__gt=timezone.now(),
-                    intentos__lt=5,
-                )
-                .order_by("-creado")
-                .first()
-            )
-            autorizado = UsuarioAutorizado.objects.filter(
-                email=email, activo=True
-            ).first()
-            if not codigo or not autorizado:
-                return Response({"detail": "Código inválido o vencido"}, status=400)
-            codigo.intentos += 1
-            valido = check_password(
-                entrada.validated_data["codigo"], codigo.codigo_hash
-            )
-            codigo.usado = valido or codigo.intentos >= 5
-            codigo.save(update_fields=["intentos", "usado"])
-            if not valido:
-                return Response({"detail": "Código inválido o vencido"}, status=400)
-            datos = {
-                campo: getattr(autorizado, campo)
-                for campo in [
-                    "rut",
-                    "nombre_completo",
-                    "rol",
-                    "carrera",
-                    "area",
-                    "sede",
-                ]
-            }
-            usuario, creado = Usuario.objects.get_or_create(email=email, defaults=datos)
-            if not usuario.is_active:
-                return Response({"detail": "Usuario desactivado"}, status=400)
-            for campo, valor in datos.items():
-                setattr(usuario, campo, valor)
-            if creado:
-                usuario.set_unusable_password()
-            usuario.save()
-            token = RefreshToken.for_user(usuario)
-        update_last_login(None, usuario)
-        return poner_refresh(
-            Response(
-                {
-                    "access": str(token.access_token),
-                    "usuario": UsuarioSerializer(usuario).data,
-                }
-            ),
-            token,
-        )
 
 
 def error_legible(detalle, campo=""):
@@ -185,10 +62,12 @@ class AutorizadosViewSet(viewsets.ModelViewSet):
         if u.rol == Rol.ADMIN:
             return qs
         if u.rol == Rol.COORDINADOR and u.carrera_id:
-            return qs.filter(carrera=u.carrera, rol=Rol.ESTUDIANTE)
+            return qs.filter(carrera=u.carrera, sede=u.sede, rol=Rol.ESTUDIANTE)
         if u.rol == Rol.DIRECTOR and u.area_id:
             return qs.filter(
-                carrera__area=u.area, rol__in=[Rol.ESTUDIANTE, Rol.COORDINADOR]
+                carrera__area=u.area,
+                sede=u.sede,
+                rol__in=[Rol.ESTUDIANTE, Rol.COORDINADOR],
             )
         return qs.none()
 
@@ -200,7 +79,7 @@ class AutorizadosViewSet(viewsets.ModelViewSet):
     def perform_update(self, serializer):
         datos = {
             c: serializer.validated_data.get(c, getattr(serializer.instance, c))
-            for c in ["rol", "carrera"]
+            for c in ["rol", "carrera", "sede"]
         }
         if not puede_administrar(self.request.user, datos):
             raise PermissionDenied()
@@ -262,11 +141,19 @@ class AutorizadosViewSet(viewsets.ModelViewSet):
                     if datos.get("area")
                     else None
                 )
-                sede = (
-                    Sede.objects.get(nombre=datos["sede"])
-                    if datos.get("sede")
-                    else None
+                from academico.normalizacion import normalizar_nombre
+
+                sede = next(
+                    (
+                        s
+                        for s in Sede.objects.all()
+                        if normalizar_nombre(s.nombre)
+                        == normalizar_nombre(datos.get("sede", ""))
+                    ),
+                    None,
                 )
+                if datos.get("sede") and not sede:
+                    raise ValueError("La sede no existe")
                 contenido = {
                     k: datos.get(k, "")
                     for k in ["email", "rut", "nombre_completo", "rol"]
@@ -293,7 +180,12 @@ class AutorizadosViewSet(viewsets.ModelViewSet):
                     email=contenido["email"].lower()
                 ).first()
                 if existente and not puede_administrar(
-                    request.user, {"rol": existente.rol, "carrera": existente.carrera}
+                    request.user,
+                    {
+                        "rol": existente.rol,
+                        "carrera": existente.carrera,
+                        "sede": existente.sede,
+                    },
                 ):
                     raise ValueError("No puedes modificar este autorizado")
                 serial = AutorizadoSerializer(existente, data=contenido)
@@ -341,7 +233,7 @@ class SesionCookie(APIView):
         []
     )  # Permitir renovar/cerrar aunque el access esté vencido.
     permission_classes = [AllowAny, ProteccionCookie]
-    throttle_classes = [ScopedRateThrottle]
+    throttle_classes = [ThrottleIP]
     throttle_scope = "refresh"
 
 
@@ -361,6 +253,7 @@ class RenovarSesion(SesionCookie):
                 if (
                     usuario is None
                     or not usuario.is_active
+                    or usuario.estado_cuenta != EstadoCuenta.ACTIVA
                     or not UsuarioAutorizado.objects.filter(
                         email=usuario.email, activo=True
                     ).exists()

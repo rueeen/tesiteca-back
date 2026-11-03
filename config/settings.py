@@ -60,9 +60,13 @@ DATABASES = {
 AUTH_USER_MODEL = "usuarios.Usuario"
 AUTH_PASSWORD_VALIDATORS = [
     {
-        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"
+        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
+        "OPTIONS": {"user_attributes": ["email", "nombre_completo"]},
     },
-    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+    {
+        "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
+        "OPTIONS": {"min_length": 10},
+    },
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
@@ -111,7 +115,9 @@ REST_FRAMEWORK = {
         "rest_framework.filters.OrderingFilter",
     ],
     "DEFAULT_THROTTLE_RATES": {
-        "codigo": "10/min",
+        "registro": "5/hour",
+        "login": "20/min",
+        "cuentas": "20/min",
         "refresh": "30/min",
         "ticket": "20/min",
         "salud": "30/min",
@@ -147,7 +153,6 @@ WS_ALLOWED_ORIGINS = config(
 SECURE_COOKIES = config("SECURE_COOKIES", default=False, cast=bool)
 REFRESH_COOKIE_NAME = config("REFRESH_COOKIE_NAME", default="tesiteca_refresh")
 EMAIL_TIMEOUT = config("EMAIL_TIMEOUT", default=10, cast=int)
-NOTIFICAR_POR_CORREO = config("NOTIFICAR_POR_CORREO", default=False, cast=bool)
 NOTIFICACIONES_WS = config("NOTIFICACIONES_WS", default=False, cast=bool)
 NETLIFY_PROXY_SECRET = config("NETLIFY_PROXY_SECRET", default="")
 NETLIFY_SITE_URL = config("NETLIFY_SITE_URL", default="")
@@ -180,3 +185,7 @@ CHANNEL_LAYERS = (
     else {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
 )
 ASGI_APPLICATION = "config.asgi.application"
+
+PASSWORD_RESET_TIMEOUT = 3600
+NOTIFICAR_APROBACION_POR_CORREO = False
+VISIBILIDAD_ENTRE_SEDES = config("VISIBILIDAD_ENTRE_SEDES", default=True, cast=bool)

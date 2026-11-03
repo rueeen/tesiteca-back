@@ -51,7 +51,7 @@ def notificar(usuarios, tipo, titulo, mensaje, enlace, datos=None, actor=None):
                         logger.exception(
                             "No se pudo entregar una notificación por WebSocket"
                         )
-                if settings.NOTIFICAR_POR_CORREO and tipo in (
+                if settings.NOTIFICAR_APROBACION_POR_CORREO and tipo in (
                     TipoNotificacion.TESIS_APROBADA,
                     TipoNotificacion.TESIS_RECHAZADA,
                 ):
@@ -70,7 +70,7 @@ def notificar(usuarios, tipo, titulo, mensaje, enlace, datos=None, actor=None):
 
 
 def avisar_revisores(tesis, actor, reenviada=False):
-    revisores = Usuario.objects.filter(
+    revisores = Usuario.objects.filter(sede_id=tesis.sede_id).filter(
         Q(rol=Rol.COORDINADOR, carrera_id=tesis.carrera_id)
         | Q(rol=Rol.DIRECTOR, area_id=tesis.carrera.area_id)
     )

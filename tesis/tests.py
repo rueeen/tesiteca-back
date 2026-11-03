@@ -16,7 +16,7 @@ from pypdf import PdfReader, PdfWriter
 from reportlab.pdfgen import canvas
 from rest_framework.test import APITestCase
 from academico.models import Area, Carrera, Sede
-from usuarios.models import Usuario, UsuarioAutorizado, Rol, CodigoAcceso
+from usuarios.models import Usuario, UsuarioAutorizado, Rol, IntentoLogin, EstadoCuenta
 from .models import Tesis, Estado, MaterialAdicional, RegistroAcceso
 from .servicios import guardar_tesis
 from .marca_agua import aplicar_marca_lector
@@ -57,7 +57,9 @@ def pdf_demo(texto="Documento de prueba", rotado=False):
             "rest_framework.filters.OrderingFilter",
         ],
         "DEFAULT_THROTTLE_RATES": {
-            "codigo": "1000/min",
+            "registro": "1000/hour",
+            "login": "1000/min",
+            "cuentas": "1000/min",
             "refresh": "1000/min",
             "ticket": "1000/min",
         },
@@ -151,47 +153,33 @@ class BackendTests(APITestCase):
             area=usuario.area,
         )
 
-    def codigo(self, usuario, codigo="123456"):
-        return CodigoAcceso.objects.create(
-            email=usuario.email,
-            codigo_hash=make_password(codigo),
-            expira_en=timezone.now() + timedelta(minutes=10),
-        )
+    def preparar_password(self, usuario):
+        usuario.set_password("Clave-demo-segura-2026")
+        usuario.save()
 
-    def test_no_autorizado_no_recibe_correo_y_respuesta_generica(self):
-        r = self.client.post(
-            "/api/auth/solicitar-codigo/", {"email": "ausente@inacap.cl"}
-        )
+    def test_inexistente_no_recibe_correo_y_respuesta_generica(self):
+        r = self.client.post("/api/auth/recuperar/", {"email": "ausente@inacap.cl"})
         self.assertEqual(r.status_code, 200)
         self.assertEqual(len(mail.outbox), 0)
-        self.assertFalse(CodigoAcceso.objects.filter(usado=False).exists())
 
     def test_dominio_rechazado(self):
         self.assertEqual(
             self.client.post(
-                "/api/auth/solicitar-codigo/", {"email": "alumno@gmail.com"}
+                "/api/auth/recuperar/", {"email": "alumno@gmail.com"}
             ).status_code,
             400,
         )
 
-    def test_codigo_correcto_jwt_normalizacion_y_reuso(self):
+    def test_password_correcta_jwt_normalizacion_y_refresh(self):
         self.autorizar(self.alumno)
-        with patch("usuarios.views.secrets.randbelow", return_value=123456):
-            r = self.client.post(
-                "/api/auth/solicitar-codigo/", {"email": self.alumno.email.upper()}
-            )
-        self.assertEqual(r.status_code, 200)
-        self.assertIn("123456", mail.outbox[0].body)
-        self.assertNotEqual(CodigoAcceso.objects.get().codigo_hash, "123456")
+        self.preparar_password(self.alumno)
         r = self.client.post(
-            "/api/auth/verificar-codigo/",
-            {"email": self.alumno.email, "codigo": "123456"},
+            "/api/auth/login/",
+            {"email": self.alumno.email.upper(), "password": "Clave-demo-segura-2026"},
         )
-        self.assertEqual(r.status_code, 200)
-        self.assertIn("access", r.data)
-        token = r.data["access"]
+        self.assertEqual(r.status_code, 200, r.data)
         self.assertNotIn("refresh", r.data)
-        refresh = r.cookies[settings.REFRESH_COOKIE_NAME].value
+        token = r.data["access"]
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
         self.assertEqual(self.client.get("/api/auth/me/").data["rol"], Rol.ESTUDIANTE)
         self.client.credentials()
@@ -201,75 +189,56 @@ class BackendTests(APITestCase):
             ).status_code,
             200,
         )
-        self.assertEqual(
-            self.client.post(
-                "/api/auth/verificar-codigo/",
-                {"email": self.alumno.email, "codigo": "123456"},
-            ).status_code,
-            400,
-        )
+        self.assertEqual(len(mail.outbox), 0)
 
     def test_cinco_intentos_y_expiracion(self):
-        self.autorizar(self.alumno)
-        codigo = self.codigo(self.alumno)
+        self.preparar_password(self.alumno)
         for _ in range(5):
             self.assertEqual(
                 self.client.post(
-                    "/api/auth/verificar-codigo/",
-                    {"email": self.alumno.email, "codigo": "000000"},
+                    "/api/auth/login/",
+                    {"email": self.alumno.email, "password": "incorrecta"},
                 ).status_code,
-                400,
+                401,
             )
-        codigo.refresh_from_db()
-        self.assertTrue(codigo.usado)
-        self.assertEqual(codigo.intentos, 5)
         self.assertEqual(
             self.client.post(
-                "/api/auth/verificar-codigo/",
-                {"email": self.alumno.email, "codigo": "123456"},
-            ).status_code,
-            400,
-        )
-        codigo = self.codigo(self.alumno)
-        codigo.expira_en = timezone.now() - timedelta(seconds=1)
-        codigo.save()
-        self.assertEqual(
-            self.client.post(
-                "/api/auth/verificar-codigo/",
-                {"email": self.alumno.email, "codigo": "123456"},
-            ).status_code,
-            400,
-        )
-
-    def test_limite_email_e_invalida_codigo_previo(self):
-        self.autorizar(self.alumno)
-        for _ in range(3):
-            self.assertEqual(
-                self.client.post(
-                    "/api/auth/solicitar-codigo/", {"email": self.alumno.email}
-                ).status_code,
-                200,
-            )
-        self.assertEqual(CodigoAcceso.objects.filter(usado=False).count(), 1)
-        self.assertEqual(
-            self.client.post(
-                "/api/auth/solicitar-codigo/", {"email": self.alumno.email}
+                "/api/auth/login/",
+                {"email": self.alumno.email, "password": "Clave-demo-segura-2026"},
             ).status_code,
             429,
         )
+        IntentoLogin.objects.update(creado=timezone.now() - timedelta(minutes=16))
+        self.assertEqual(
+            self.client.post(
+                "/api/auth/login/",
+                {"email": self.alumno.email, "password": "Clave-demo-segura-2026"},
+            ).status_code,
+            200,
+        )
+
+    def test_limite_recuperaciones_por_email(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            for _ in range(4):
+                self.assertEqual(
+                    self.client.post(
+                        "/api/auth/recuperar/", {"email": self.alumno.email}
+                    ).status_code,
+                    200,
+                )
+        self.assertEqual(len(mail.outbox), 3)
 
     def test_desactivado_no_login(self):
         autorizado = self.autorizar(self.alumno)
-        self.codigo(self.alumno)
+        self.preparar_password(self.alumno)
         autorizado.activo = False
         autorizado.save()
-        self.assertEqual(
-            self.client.post(
-                "/api/auth/verificar-codigo/",
-                {"email": self.alumno.email, "codigo": "123456"},
-            ).status_code,
-            400,
+        r = self.client.post(
+            "/api/auth/login/",
+            {"email": self.alumno.email, "password": "Clave-demo-segura-2026"},
         )
+        self.assertEqual(r.status_code, 403)
+        self.assertEqual(r.data["codigo"], "desactivada")
 
     def excel(self, filas):
         libro = Workbook()
@@ -576,18 +545,16 @@ class BackendTests(APITestCase):
         )
 
     def test_error_smtp_conserva_respuesta_generica(self):
-        self.autorizar(self.alumno)
         with patch(
-            "usuarios.views.send_mail", side_effect=OSError("SMTP no disponible")
+            "usuarios.cuentas.EmailMultiAlternatives.send",
+            side_effect=OSError("SMTP no disponible"),
         ):
-            with self.assertLogs("usuarios.views", level="ERROR"):
-                r = self.client.post(
-                    "/api/auth/solicitar-codigo/", {"email": self.alumno.email}
-                )
+            with self.assertLogs("usuarios.cuentas", level="ERROR"):
+                with self.captureOnCommitCallbacks(execute=True):
+                    r = self.client.post(
+                        "/api/auth/recuperar/", {"email": self.alumno.email}
+                    )
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(
-            r.data["detail"], "Si el correo está autorizado, recibirás un código"
-        )
 
     def test_borrado_conserva_auditoria_sin_exponer_archivos(self):
         tesis = self.tesis(usuario=self.alumno, publicar=False)
@@ -642,9 +609,17 @@ class BackendTests(APITestCase):
             self.assertIn("id", datos[campo])
         self.assertEqual(
             set(datos["carrera"]),
-            {"id", "nombre", "codigo", "area", "permite_repositorio"},
+            {
+                "id",
+                "nombre",
+                "codigo",
+                "area",
+                "permite_repositorio",
+                "nivel_formacion",
+                "duracion_semestres",
+            },
         )
-        self.assertEqual(set(datos["sede"]), {"id", "nombre"})
+        self.assertEqual(set(datos["sede"]), {"id", "nombre", "ciudad", "region"})
         self.assertEqual(set(datos["tipo"]), {"id", "nombre"})
         self.assertEqual(set(datos["subido_por"]), {"id", "nombre_completo", "email"})
         for bandera in ["puede_editar", "puede_revisar", "puede_reenviar"]:
@@ -729,9 +704,9 @@ class BackendTests(APITestCase):
                 )
 
     def test_sede_unica_ambigua_inactiva_y_explicita(self):
-        self.alumno.sede = None
-        self.alumno.save()
-        self.login(self.alumno)
+        self.admin.sede = None
+        self.admin.save()
+        self.login(self.admin)
         r = self.client.post(
             "/api/tesis/", self.datos_subida("Sede única"), format="multipart"
         )
@@ -803,7 +778,8 @@ class BackendTests(APITestCase):
         self.login(self.alumno)
         datos = self.client.get("/api/auth/me/").data
         self.assertEqual(datos["carrera"]["nombre"], self.ap.nombre)
-        self.assertEqual(datos["sede"], {"id": self.sede.id, "nombre": "Arica"})
+        self.assertEqual(datos["sede"]["nombre"], "Arica")
+        self.assertEqual(datos["sede"]["region"]["id"], "XV")
         self.assertIsNone(datos["area"])
         self.login(self.director)
         datos = self.client.get("/api/auth/me/").data
@@ -811,10 +787,10 @@ class BackendTests(APITestCase):
         self.assertEqual(datos["area"]["id"], self.area.id)
         self.client.force_authenticate(None)
         self.autorizar(self.alumno)
-        self.codigo(self.alumno)
+        self.preparar_password(self.alumno)
         r = self.client.post(
-            "/api/auth/verificar-codigo/",
-            {"email": self.alumno.email, "codigo": "123456"},
+            "/api/auth/login/",
+            {"email": self.alumno.email, "password": "Clave-demo-segura-2026"},
         )
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.data["usuario"]["carrera"]["nombre"], self.ap.nombre)
@@ -1069,8 +1045,7 @@ class BackendTests(APITestCase):
         from notificaciones.models import Notificacion
         from django.db import transaction
 
-        self.otro.is_active = False
-        self.otro.save()
+        self.otro.cambiar_estado(EstadoCuenta.DESACTIVADA)
         with override_settings(NOTIFICACIONES_WS=False, NOTIFICAR_POR_CORREO=True):
             with self.captureOnCommitCallbacks(execute=True):
                 creadas = notificar(
@@ -1083,8 +1058,7 @@ class BackendTests(APITestCase):
                 )
         self.assertEqual(len(creadas), 1)
         self.assertEqual(creadas[0].usuario_id, self.alumno.id)
-        self.assertEqual(len(mail.outbox), 1)
-        self.assertIn("/tesis/1", mail.outbox[0].body)
+        self.assertEqual(len(mail.outbox), 0)
         with self.assertRaises(RuntimeError):
             with transaction.atomic():
                 notificar(
@@ -1193,3 +1167,88 @@ class BackendTests(APITestCase):
             )
         )
         r.close()
+
+    def test_alcance_sede_visibilidad_region_y_periodo(self):
+        otra_sede = Sede.objects.create(
+            nombre="Otra sede", ciudad="Santiago", region="RM", orden=7
+        )
+        tesis = self.tesis(titulo="Tesis de otra sede", publicar=False)
+        tesis.sede = otra_sede
+        tesis.periodo = 2
+        tesis.save()
+        self.login(self.coordinador)
+        self.assertEqual(self.client.get("/api/tesis/pendientes/").data["count"], 0)
+        self.assertEqual(
+            self.client.post(f"/api/tesis/{tesis.pk}/aprobar/").status_code, 404
+        )
+        tesis.estado = Estado.PUBLICADA
+        tesis.save()
+        self.login(self.alumno)
+        with override_settings(VISIBILIDAD_ENTRE_SEDES=True):
+            r = self.client.get("/api/tesis/?region=RM")
+            self.assertEqual(r.data["count"], 1)
+            self.assertEqual(
+                r.data["results"][0]["periodo"], {"id": 2, "nombre": "Segundo semestre"}
+            )
+            self.assertEqual(
+                r.data["results"][0]["periodo_texto"], "2025 · Segundo semestre"
+            )
+            self.assertEqual(self.client.get("/api/tesis/?region=XV").data["count"], 0)
+        with override_settings(VISIBILIDAD_ENTRE_SEDES=False):
+            self.assertEqual(self.client.get("/api/tesis/").data["count"], 0)
+        self.ap.nivel_formacion = "TECNICO"
+        self.ap.save()
+        with override_settings(VISIBILIDAD_ENTRE_SEDES=True):
+            self.assertEqual(
+                self.client.get("/api/tesis/?nivel_formacion=TECNICO").data["count"], 1
+            )
+            self.assertEqual(
+                self.client.get("/api/tesis/?nivel_formacion=INGENIERIA").data["count"],
+                0,
+            )
+
+    def test_resumen_normalizado_y_listado_limite_palabra(self):
+        from .texto import normalizar_resumen, resumen_breve
+
+        texto = "  Esta infor-\r\nmación   se pegó de un PDF y corta\nla frase a la mitad.\nSegundo párrafo.\n\n\n- Primera viñeta\n• Segunda viñeta\n1) Tercera viñeta"
+        esperado = "Esta información se pegó de un PDF y corta la frase a la mitad.\n\nSegundo párrafo.\n\n- Primera viñeta\n\n• Segunda viñeta\n\n1) Tercera viñeta"
+        self.assertEqual(normalizar_resumen(texto), esperado)
+        self.assertEqual(normalizar_resumen(esperado), esperado)
+        largo = "palabra larga " * 40
+        resumen = resumen_breve(largo)
+        self.assertLessEqual(len(resumen), 280)
+        self.assertTrue(resumen.endswith("…"))
+        self.assertTrue(largo.startswith(resumen[:-1]))
+        self.login(self.admin)
+        tesis = self.tesis()
+        r = self.client.patch(f"/api/tesis/{tesis.pk}/", {"resumen": texto})
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["resumen"], esperado)
+
+    def test_notificaciones_y_autorizados_no_cruzan_sedes(self):
+        otra_sede = Sede.objects.create(nombre="Otra sede", ciudad="Otra", region="I")
+        otro_coord = Usuario.objects.create_user(
+            "coord-otra@inacap.cl",
+            nombre_completo="Otra sede",
+            rol=Rol.COORDINADOR,
+            carrera=self.ap,
+            sede=otra_sede,
+        )
+        self.tesis(usuario=self.alumno, publicar=False)
+        from notificaciones.models import Notificacion
+
+        self.assertFalse(Notificacion.objects.filter(usuario=otro_coord).exists())
+        autorizado = UsuarioAutorizado.objects.create(
+            email="autorizado-otra@inacapmail.cl",
+            nombre_completo="Otra",
+            carrera=self.ap,
+            sede=otra_sede,
+        )
+        self.login(self.coordinador)
+        self.assertEqual(self.client.get("/api/admin/autorizados/").data["count"], 0)
+        self.assertEqual(
+            self.client.patch(
+                f"/api/admin/autorizados/{autorizado.pk}/", {"activo": False}
+            ).status_code,
+            404,
+        )
