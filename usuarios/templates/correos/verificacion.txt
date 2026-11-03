@@ -1,0 +1,6 @@
+Hola {{ usuario.nombre_completo }},
+
+Valida tu cuenta: {{ enlace }}
+
+El enlace es válido durante 48 horas.
+Si no fuiste tú, ignora este correo.

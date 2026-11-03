@@ -4,7 +4,7 @@ from django.conf import settings
 from django.db import connection
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from rest_framework.throttling import ScopedRateThrottle
+from config.throttling import ThrottleIP
 from rest_framework.views import APIView
 
 
@@ -26,7 +26,7 @@ def version_git():
 class Salud(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
-    throttle_classes = [ScopedRateThrottle]
+    throttle_classes = [ThrottleIP]
     throttle_scope = "salud"
 
     def get(self, request):

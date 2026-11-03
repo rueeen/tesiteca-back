@@ -1,240 +1,134 @@
-# Biblioteca de Tesis · INACAP Arica
+# Tesiteca · Biblioteca de Tesis INACAP
 
-Backend Django 5.2, DRF y SQLite para la demo de Informática, Ciberseguridad y Telecomunicaciones. Requiere Python 3.11 o superior. El proyecto está en la raíz de este repositorio.
+Django 5.2, DRF, SimpleJWT y SQLite. Python 3.11+ en desarrollo; Python 3.12+ en la instalación de PythonAnywhere documentada en [DEPLOY.md](DEPLOY.md). PDFs privados con marca fija y por lector, revisión editorial, permisos por carrera/área y sede. La cuenta gratuita usa polling, un worker y proxy Netlify firmado.
 
-## Instalación local
+## Instalación y actualización
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt
 cp .env.example .env
-python -c "import secrets; print(secrets.token_urlsafe(64))"
-# Copiar el resultado a SECRET_KEY en .env; configurar SEED_ADMIN_EMAIL.
+# Completar SECRET_KEY con un valor generado localmente.
 python manage.py migrate
-python manage.py seed_demo --con-ejemplos
+python manage.py seed_demo
+python manage.py crear_admin rvalencia@inacap.cl
 python manage.py runserver
 ```
 
-No versionar `.env`, SQLite ni los archivos privados. `SECRET_KEY` es obligatorio, incluso en desarrollo. Los valores de entorno del proceso tienen prioridad sobre `.env`. La configuración local preparada en la nube usa `/workspace/venv-tesiteca`; activar con `source /workspace/venv-tesiteca/bin/activate` desde `/workspace/tesiteca-back`.
+No sobrescribir un `.env` existente ni versionar secretos, cookies, SQLite o archivos privados. Producción WSGI instala **solo `requirements.txt`**. `requirements-asgi.txt` añade Uvicorn/Redis para planes compatibles; `requirements-dev.txt` añade Daphne para todas las pruebas.
 
-`seed_demo` es idempotente: crea Arica, el área y las carreras IEI/AP. `SEED_ADMIN_EMAIL`, si se configura con un correo institucional, agrega ese ADMIN a la lista blanca. `--con-ejemplos` agrega 15 tesis de 5–10 páginas (11 publicadas, 3 en revisión y 1 rechazada) y seis personas ficticias. Cada tesis pertenece a la carrera de quien la sube y de sus autores vinculados. `--reset-ejemplos` elimina las tesis cuyo título empieza por `Demo ` y sus archivos antes de regenerar los ejemplos; usarlo para actualizar el seed antiguo. Los enlaces de repositorios de ejemplo son ficticios. No cargar ejemplos en producción.
+El acceso ahora usa **contraseña**. Los usuarios que ingresaban con el flujo anterior conservan sus datos y pasan a ACTIVA si estaban activos. Quienes no tienen contraseña utilizable deben usar **Olvidé mi contraseña**. No se genera ni publica una contraseña por defecto. El administrador inicial se prepara con `crear_admin`, que valida correo `@inacap.cl`, pide nombre y contraseña de forma privada y configura acceso a `/admin/`.
 
-## Variables
+Antes de actualizar producción respaldar SQLite y archivos privados. Las migraciones conservan usuarios, tesis, autorías y archivos; renombran el campo académico anterior a `periodo` y normalizan resúmenes. Los identificadores del modelo de acceso retirado permanecen exclusivamente en las migraciones históricas necesarias para actualizar instalaciones anteriores.
 
-Ver `.env.example`. Configurar `DEBUG=False`, `ALLOWED_HOSTS` y `CORS_ALLOWED_ORIGINS` para cada despliegue. `PRIVATE_MEDIA_ROOT` admite una ruta absoluta; una relativa se resuelve desde el directorio de trabajo. Debe quedar fuera de directorios públicos. Los límites son `MAX_PDF_MB=30` y `MAX_MATERIAL_MB=50`. Los tokens duran `ACCESS_TOKEN_MINUTES=10` y `REFRESH_TOKEN_DAYS=7`.
+## Flujo de cuentas
 
-Correo local: `EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend`. En producción usar `django.core.mail.backends.smtp.EmailBackend` y configurar `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `EMAIL_USE_TLS` y `DEFAULT_FROM_EMAIL`. Guardar las credenciales en variables o en `.env` protegido, nunca en Git.
+1. Registro con correo institucional, RUT chileno válido, sede y contraseña de al menos 10 caracteres. Estudiantes `@inacapmail.cl` solicitan solo ESTUDIANTE; funcionarios `@inacap.cl`, COORDINADOR o DIRECTOR. ADMIN nunca se solicita.
+2. Un correo de verificación (48 h, un solo uso). Si hay una entrada activa en la lista blanca, queda preaprobado; de lo contrario pasa a aprobación y se notifica en la app a los revisores correspondientes.
+3. Coordinador: estudiantes de su carrera y sede. Director: estudiantes/coordinadores de su área y sede. ADMIN: alcance nacional y único aprobador de DIRECTOR. Si un director no indicó carrera y existe más de un área, ADMIN debe seleccionar una carrera para determinar su área al aprobar.
+4. El login correcto de una cuenta ACTIVA devuelve access y usuario. No envía correo. Una solicitud rechazada puede volver a presentarse sin repetir la verificación de correo.
+5. La recuperación por correo dura una hora, solo para cuentas activas. Restablecer invalida los refresh anteriores y elimina bloqueos por intentos. El cambio autenticado exige contraseña actual y rota la sesión.
 
-## Autenticación de la API
+Correos de negocio: solo verificación y recuperación, con texto y HTML. En desarrollo se imprimen en consola; en producción usar Gmail SMTP según [DEPLOY.md](DEPLOY.md). No se envían correos al aprobar/rechazar cuentas ni tesis; `NOTIFICAR_APROBACION_POR_CORREO=False` reserva una futura decisión. `probar_correo` es una herramienta administrativa de diagnóstico.
 
-```bash
-curl -X POST http://127.0.0.1:8000/api/auth/solicitar-codigo/ \
-  -H 'Content-Type: application/json' -d '{"email":"demo1@inacapmail.cl"}'
-# Leer el código de seis dígitos en la consola del servidor:
-curl -c cookies.txt -X POST http://127.0.0.1:8000/api/auth/verificar-codigo/ \
-  -H 'Content-Type: application/json' -d '{"email":"demo1@inacapmail.cl","codigo":"123456"}'
-```
-
-La respuesta devuelve solo `access` y `usuario`; el refresh se guarda en una cookie httpOnly. Enviar `Authorization: Bearer <access>` en las demás solicitudes. Renovar con la cookie en `POST /api/auth/refresh/`, nunca con el body. Consultar perfil en `GET /api/auth/me/`. No guardar ninguno de los tokens en localStorage: el access vive en memoria y la cookie la gestiona el navegador.
-
-Las solicitudes de código tienen respuesta genérica para correos institucionales; dominios ajenos se rechazan con 400. Se cuentan también las solicitudes de emails no autorizados para que el límite no revele la lista blanca. Código válido durante 10 minutos, cinco intentos, un solo uso y tres solicitudes por correo en 10 minutos. Además existe throttle de 10/min por IP por endpoint. La caché de desarrollo es local al proceso; configurar caché compartida si se despliegan varios workers. Desactivar un autorizado desactiva también al usuario y revoca todos sus refresh; los access existentes dejan de ser aceptados por SimpleJWT. Reactivar permite iniciar una sesión nueva, sin recuperar los refresh revocados.
-
-El rol ADMIN de la API no habilita automáticamente el panel Django. Para el panel:
-
-```bash
-python manage.py createsuperuser
-```
-
-Su contraseña se usa solo en `/admin/`. El login de la API sigue requiriendo lista blanca y código.
-
-## Lista blanca
-
-Usuarios ADMIN, coordinadores y directores pueden descargar `GET /api/admin/autorizados/plantilla/` e importar con `POST /api/admin/autorizados/importar/` (multipart, campo `archivo`, CSV UTF-8 o XLSX, máximo 5 MB y 10000 filas).
-
-Columnas exactas, en este orden:
-
-```csv
-email,rut,nombre_completo,rol,carrera_codigo,area,sede
-estudiante@inacapmail.cl,12345678-9,Estudiante Demo,ESTUDIANTE,AP,,Arica
-coordinador@inacap.cl,11222333-4,Coordinador Demo,COORDINADOR,IEI,,Arica
-```
-
-Roles: `ESTUDIANTE`, `COORDINADOR`, `DIRECTOR`, `ADMIN`. Carrera obligatoria para estudiantes y coordinadores; área por nombre exacto obligatoria para directores; sede por nombre exacto, opcional. Los códigos de carrera y nombres de catálogos deben existir. Se normalizan emails y se actualiza por email. Una fila inválida no detiene las demás. Se devuelve `total_filas`, `creados`, `actualizados`, `errores` con número de fila Excel (encabezado en fila 1). La actualización no reactiva automáticamente una persona previamente desactivada.
-
-`GET /api/admin/autorizados/` admite búsqueda y filtros `rol`, `carrera`, `activo`. `PATCH /api/admin/autorizados/{id}/` edita datos y activa/desactiva. Los coordinadores administran estudiantes de su carrera y los directores estudiantes/coordinadores de carreras de su área. No pueden cambiar un registro para elevarlo fuera de ese ámbito. El archivo de importación se conserva en almacenamiento privado, sin URL pública.
-
-## Biblioteca y flujo editorial
-
-- Catálogos autenticados: `/api/catalogos/sedes/`, `areas/`, `carreras/`, `tipos/`, `anios/`, `profesores-guia/`.
-- `GET /api/tesis/`: solo publicaciones visibles. Busca con `search`; `en_contenido=true` incluye texto del PDF. Filtros: `carrera`, `sede`, `tipo`, `anio`, `anio_desde`, `anio_hasta`, `profesor_guia`, `palabra_clave`, `tiene_repositorio`. Orden por `anio`, `titulo`, `fecha_publicacion` con prefijo `-` opcional. Paginación de 12, máximo 48 con `page_size`.
-- `POST /api/tesis/`: multipart con `titulo`, `resumen`, `palabras_clave` como texto separado por comas o lista JSON, `tipo` (`TESIS`, `PROYECTO_TITULO`, `INFORME_PRACTICA`), `anio`, `semestre` opcional (1 o 2), ID de `carrera` y `sede` opcional (por defecto la del usuario o la única sede activa), `profesor_guia`, `pdf`, `autores` (JSON `[{"nombre_completo":"...","email":"..."}]`) y `repositorio_url` opcional. `publicar=true` permite publicación directa para coordinador/director/admin dentro de su ámbito. Estudiantes siempre envían a revisión y se agregan como autores vinculados.
-- `GET/PATCH/DELETE /api/tesis/{id}/`: detalle y edición. Estudiantes solo editan/eliminan sus tesis en BORRADOR o RECHAZADA. Coordinadores/directores administran su ámbito; ADMIN todo. La carrera de una tesis existente no se cambia. Reemplazar PDF regenera hash, texto y marcas. Cambiar año regenera el pie de página.
-- `GET /api/tesis/mis-tesis/`: subidas y autorías vinculadas, todos los estados. `GET /api/tesis/pendientes/`: revisión del ámbito del funcionario.
-- `POST /api/tesis/{id}/aprobar/`, `rechazar/` (JSON `{"observacion":"..."}` obligatorio) y `reenviar/`. Aprobar/rechazar requiere EN_REVISION; reenviar requiere autor y estado BORRADOR/RECHAZADA.
-
-Estudiantes ven publicadas de su carrera y sus propias autorías en cualquier estado. Los funcionarios ven las tesis de su ámbito y las propias. El listado nunca entrega rutas privadas ni texto extraído.
-
-## PDFs y material
-
-`GET /api/tesis/{id}/pdf/` requiere JWT y devuelve PDF inline con marca fija y marca del lector (email, fecha, IP de la conexión), `Cache-Control: no-store` y `nosniff`. El frontend debe solicitarlo con Authorization y mostrar un Blob en su visor. No poner tokens en URLs. `GET /api/tesis/{id}/pdf-original/` está reservado a ADMIN. Las marcas ayudan a la trazabilidad; no impiden copiar o capturar un documento.
-
-Se valida firma `%PDF`, tamaño, lectura completa, ausencia de cifrado y SHA-256 único. Las marcas respetan dimensiones y normalizan rotación por página. Los fallos al generar la marca revierten la fila y limpian los nuevos archivos. SQLite y archivos no constituyen una única transacción frente a un cierre abrupto del proceso; incluir ambos en respaldos y revisar archivos huérfanos tras incidentes.
-
-`GET/POST /api/tesis/{id}/materiales/`: `tipo`, `titulo`, `descripcion`, `solo_carrera`, y `url` o `archivo`. Repositorios: solo carreras habilitadas, HTTPS GitHub con formato propietario/repositorio, siempre restringidos a la carrera. Enlaces: HTTPS. Archivos: extensión permitida en `Carrera.extensiones_material` y límite configurable. No se habilitan formatos especiales adicionales.
-
-`POST /api/materiales/{id}/acceso/` devuelve URL y registra acceso. `GET /api/materiales/{id}/descargar/` sirve adjuntos autenticados. `DELETE /api/materiales/{id}/` usa permisos de edición de la tesis. Un material restringido conserva metadatos pero omite URL/descarga e indica `restringido: true`. También acceden ADMIN y directores del área. Se registran usuario, tesis, acción, IP y user-agent. Al eliminar una tesis se conserva el registro de acceso con referencia nula. El admin ofrece acciones de aprobación y regeneración, y registros de acceso de solo lectura.
-
-## Validación
-
-```bash
-python manage.py check
-python manage.py makemigrations --check --dry-run
-pip install -r requirements-dev.txt
-python manage.py test
-```
-
-Las pruebas usan SQLite temporal, correo en memoria y archivos aislados: login/JWT, límites y expiración, importación/upsert y permisos, visibilidad, revisión, materiales, PDF cifrado/duplicado, rotación, marcas, descarga autenticada y rollback. El seed se puede ejecutar dos veces sin duplicar las tesis de ejemplo, también con `--reset-ejemplos`.
-
-## Despliegue
-
-Consultar [DEPLOY.md](DEPLOY.md) para la cuenta gratuita de **rvavalencia**, con backend `https://rvavalencia.pythonanywhere.com` y frontend `https://tesiteca.netlify.app`. Usar `.env.produccion.example`, proxy Netlify firmado, WSGI sin WebSockets y mantenimiento mensual manual.
-
-## Usuarios demo
-
-| Correo | Rol | Carrera / área |
-|---|---|---|
-| demo1@inacapmail.cl | ESTUDIANTE | IEI |
-| demo2@inacapmail.cl | ESTUDIANTE | IEI |
-| demo3@inacapmail.cl | ESTUDIANTE | AP |
-| demo4@inacapmail.cl | COORDINADOR | AP |
-| demo5@inacapmail.cl | COORDINADOR | IEI |
-| demo6@inacapmail.cl | DIRECTOR | Informática, Ciberseguridad y Telecomunicaciones |
-
-Ingresar mediante código de correo (consola en desarrollo). `demo1` tiene una tesis rechazada con observación para probar el reenvío. Hay pendientes para los coordinadores de ambas carreras. El comando imprime esta tabla al terminar.
-
-Para reemplazar las tesis del esquema anterior y limpiar sus PDFs:
-
-```bash
-python manage.py migrate
-python manage.py seed_demo --con-ejemplos --reset-ejemplos
-```
+Límites: registro 5/h por IP; login 20/min por IP y bloqueo tras cinco fallos por email en 15 minutos; verificación tres envíos por email cada 24 h; recuperación tres por email cada hora. Las respuestas de registro, reenvío y recuperación son genéricas; los errores de validación son por campo. Los estados solo se revelan después de verificar la contraseña.
 
 ## Contrato de la API
 
-### `POST /api/auth/refresh/`
+### Cuentas
 
-Requiere `X-Requested-With: XMLHttpRequest` y, si se envía `Origin`, debe estar en `CSRF_TRUSTED_ORIGINS` (si no, 403). Lee exclusivamente la cookie httpOnly; ignora el body.
+| Método y ruta | Body | Respuesta |
+|---|---|---|
+| `POST /api/auth/registro/` | `{email, password, password2, nombre_completo, rut, carrera, sede, rol_solicitado?, mensaje?}` | 201 `{detail}` genérico; 400 por campo |
+| `POST /api/auth/verificar-correo/` | `{token}` | 200 `{estado: "ACTIVA" | "PENDIENTE_APROBACION"}`; 400 `{detail}` |
+| `POST /api/auth/reenviar-verificacion/` | `{email}` | 200 `{detail}` genérico |
+| `POST /api/auth/login/` | `{email, password}` | 200 `{access, usuario}` + cookie; 401 genérico; 403 `{codigo, detail, motivo?}`; 429 |
+| `POST /api/auth/recuperar/` | `{email}` | 200 `{detail}` genérico |
+| `POST /api/auth/restablecer/` | `{uid, token, password, password2}` | 200 `{detail}`; 400 |
+| `POST /api/auth/cambiar-password/` | `{actual, nueva, nueva2}` (JWT) | 200 `{access}` + cookie nueva |
+| `POST /api/auth/refresh/` | Cookie, ignora body | 200 `{access, usuario}` + cookie rotada; sin cookie 204 sin body; cookie inválida 401 y se elimina |
+| `POST /api/auth/logout/` | Cookie | 204, revoca y elimina cookie, incluso con access vencido |
+| `GET /api/auth/me/` | JWT | Datos de usuario |
 
-| Situación | Respuesta |
-|---|---|
-| Sin cookie | `204 No Content`, sin body: no hay sesión que restaurar |
-| Cookie válida | `200` con `{access, usuario}` y cookie de refresh rotada |
-| Cookie inválida, vencida, en lista negra o usuario desactivado/no autorizado | `401` y cookie eliminada |
+Códigos 403: `correo_no_verificado`, `pendiente_aprobacion`, `rechazada` (con motivo), `desactivada`. El usuario contiene `id, email, rut, nombre_completo, rol, estado_cuenta, carrera, area, sede`; las relaciones se anidan y pueden ser null según el rol.
 
-El frontend debe tratar `204` como visitante sin sesión y `401` como sesión inválida. Ninguna respuesta incluye refresh en el body.
+Access solo en memoria; refresh solo en cookie httpOnly, SameSite=Strict, Path=/api/auth/, Secure en producción. No guardar tokens en localStorage ni incluirlos en URLs. Refresh/logout exigen `X-Requested-With: XMLHttpRequest`; Origin, si viene, debe pertenecer a `CSRF_TRUSTED_ORIGINS`. Usar `credentials: "include"`. Son 30/min por IP. La sesión se restaura con una llamada a refresh; centralizar renovaciones concurrentes. Desactivar la lista blanca desactiva la cuenta y revoca sus refresh. La recuperación invalida los enlaces usados al cambiar el hash de contraseña.
 
-Objetos reutilizables:
+### Solicitudes
 
-```json
-// CarreraMini
-{ "id": 1, "nombre": "Ingeniería en Informática", "codigo": "IEI", "area": 1, "permite_repositorio": true }
-// Mini (sede, área, tipo)
-{ "id": 1, "nombre": "Arica" }          // tipo usa id = código: { "id": "TESIS", "nombre": "Tesis" }
-// UsuarioMini
-{ "id": 4, "nombre_completo": "Persona ficticia 4", "email": "demo4@inacapmail.cl" }
+- `GET /api/solicitudes/?estado=PENDIENTE|APROBADA|RECHAZADA&carrera=&sede=&search=`: paginación `{count,next,previous,results}`.
+- Cada elemento: `{id, usuario:{id,email,nombre_completo,rut}, rol_solicitado, carrera, sede, mensaje, estado, motivo_rechazo, creada, revisada_por, revisada_en, puede_cambiar_rol}`.
+- `GET /api/solicitudes/resumen/` → `{pendientes}`.
+- `POST /api/solicitudes/{id}/aprobar/` con `{rol?,carrera?,sede?}` → item actualizado. Solo ADMIN puede cambiar lo solicitado.
+- `POST /api/solicitudes/{id}/rechazar/` con `{motivo}` obligatorio, máximo 300 caracteres.
+
+No se muestran correos sin verificar. Se conserva historial APROBADA/RECHAZADA, siempre limitado al ámbito del aprobador. Aprobar actualiza la lista blanca. Importar un preaprobado cuyo usuario ya verificó y está pendiente aprueba automáticamente; no habilita cuentas que aún no verificaron correo.
+
+### Catálogos y objetos
+
+- `CarreraMini`: `{id,nombre,codigo,area,permite_repositorio,nivel_formacion:{id,nombre},duracion_semestres}`.
+- `SedeMini`: `{id,nombre,ciudad,region:{id,nombre}}`.
+- `UsuarioMini`: `{id,nombre_completo,email}`.
+- Catálogos de registro públicos: sedes, carreras, regiones y niveles (siguen pasando por el proxy firmado en producción).
+- `GET /api/catalogos/sedes/`: activas, por `orden`, de norte a sur.
+- `GET /api/catalogos/regiones/`: 16 regiones de norte a sur, IDs romanos; Metropolitana usa `RM` (el CSV también acepta `XIII`).
+- `GET /api/catalogos/niveles/`: TECNICO («Técnico de Nivel Superior»), PROFESIONAL («Profesional»), INGENIERIA («Ingeniería»).
+- `GET /api/catalogos/carreras/`: activas, CarreraMini más `extensiones_material`.
+- `GET /api/catalogos/areas/`, `tipos/`, `anios/`, `profesores-guia/`: catálogos autenticados. Tipos `{id,nombre}`; profesores son strings.
+- `GET/POST /api/admin/sedes/`, `PATCH /api/admin/sedes/{id}/`: solo ADMIN; `nombre,ciudad,region,orden,activa`.
+
+La carrera tiene duración de 2–10 semestres, editable en Django admin. El seed configura IEI como INGENIERIA/8 y AP como TECNICO/4; **confirmar duración de AP con la malla vigente**.
+
+### Biblioteca, período y resumen
+
+`GET /api/tesis/` lista solo PUBLICADAS visibles. Estudiante: su carrera en todas las sedes por defecto, más las propias según estado. `VISIBILIDAD_ENTRE_SEDES=False` limita las publicaciones a su sede. Coordinador: carrera+sede; director: área+sede; ADMIN: nacional.
+
+Búsqueda `search` en título, resumen, palabras, autores y guía; `en_contenido=true` añade texto PDF. Filtros: `carrera,sede,region,nivel_formacion,tipo,anio,anio_desde,anio_hasta,profesor_guia,palabra_clave,tiene_repositorio`. Orden por año, título o fecha de publicación (prefijo `-` para descendente). Paginación de 12, máximo 48 con `page_size`.
+
+Listado: `id,titulo,resumen,autores` (nombres), `carrera` (objeto), `anio,tipo` (objeto), `periodo,periodo_texto,profesor_guia,palabras_clave` (lista), `num_paginas,tiene_repositorio`. El resumen de máximo 280 caracteres se corta por palabra y termina en «…» si se recorta.
+
+Detalle y elementos de `mis-tesis/`/`pendientes/`: además incluye resumen completo, sede anidada, estado/estado_nombre, observación, subido_por/revisado_por anidados, fechas, autores `{nombre_completo,email}`, materiales, `pdf` protegido y flags `puede_editar,puede_revisar,puede_reenviar`.
+
+**El período es el semestre del año académico**, no el nivel de carrera. Escritura `periodo=1|2`; lectura `periodo:{id:1,nombre:"Primer semestre"}` y `periodo_texto:"2026 · Primer semestre"` (segundo si 2). Los registros antiguos sin período conservan null y muestran el año en `periodo_texto`.
+
+`POST /api/tesis/` y `PATCH /api/tesis/{id}/` aceptan multipart: `titulo,resumen,palabras_clave,tipo,anio,periodo,carrera,sede,profesor_guia,pdf,autores,repositorio_url?,publicar?`. PDF obligatorio al crear. Sede por defecto la del usuario; si no tiene sede, solo puede omitirse cuando hay una única activa. Usuarios no ADMIN no pueden subir a otra sede. Autores es JSON `[{nombre_completo,email}]`; palabras clave acepta CSV o JSON de strings, recorta espacios y deduplica sin distinguir mayúsculas.
+
+El resumen normaliza saltos del PDF, reúne palabras cortadas con guion, mantiene párrafos/viñetas y colapsa espacios. Se aplica al escribir y mediante migración a las tesis existentes. La creación del PDF y su marca se revierte ante fallos y se limpian archivos nuevos.
+
+Acciones: `/api/tesis/mis-tesis/`, `pendientes/`, `/{id}/aprobar/`, `rechazar/` con observación, `reenviar/`. El autor solo edita/elimina BORRADOR o RECHAZADA. Los revisores reciben avisos solo de tesis de su sede. Materiales `solo_carrera` siguen restringidos por carrera (y por área/sede del director), ocultando URL/descarga cuando no hay permiso.
+
+## Lista blanca y sedes oficiales
+
+`GET /api/admin/autorizados/plantilla/` descarga XLSX; `POST /api/admin/autorizados/importar/` recibe CSV UTF-8/XLSX, campo `archivo`, máximo 5 MB/10000 filas. Columnas `email,rut,nombre_completo,rol,carrera_codigo,area,sede`; `activo` opcional al final. Sede se busca sin distinguir mayúsculas ni tildes. Upsert por email con errores por fila legibles. El alcance es carrera+sede para coordinadores, área+sede para directores, nacional para ADMIN. Desactivar revoca sesiones; reactivar no recupera los refresh revocados.
+
+No hay una lista fija de sedes en código. Solo Arica se crea por seed. Cargar la lista oficial desde CSV o `/api/admin/sedes/`:
+
+```bash
+python manage.py importar_sedes docs/sedes_ejemplo.csv
+# Para la lista oficial del propietario: python manage.py importar_sedes sedes.csv
 ```
 
-### `GET /api/auth/me/` y `usuario` en la respuesta de `verificar-codigo/`
-```json
-{ "id": 1, "email": "...", "rut": "", "nombre_completo": "...", "rol": "ESTUDIANTE",
-  "carrera": CarreraMini | null, "area": Mini | null, "sede": Mini | null }
+Columnas exactas `nombre,ciudad,region,orden`. Región acepta nombre o número romano. Upsert por nombre en una transacción; se imprime el resumen. El ejemplo contiene únicamente Arica. Las sedes inactivas no aparecen en catálogos.
+
+## PDFs, notificaciones y despliegue
+
+PDFs en `PRIVATE_MEDIA_ROOT`, **nunca público ni static**. Validación de tamaño, firma, cifrado, SHA-256 único y extracción de texto. Marca fija con tamaño/rotación/origen de página y marca del lector con email, fecha e IP validada por proxy. `/api/tesis/{id}/pdf/` requiere JWT y devuelve inline/no-store/nosniff; `pdf-original/` solo ADMIN. Las marcas ayudan a la trazabilidad, no impiden capturas.
+
+Notificaciones persistidas: `GET /api/notificaciones/?leida=false&desde_id=`, `resumen/`, `POST /{id}/leer/`, `leer-todas/`. Tipo nuevo `SOLICITUD_ACCESO`, enlace `/solicitudes`. Solo propias; polling no pierde datos. WS es opcional para planes compatibles: ticket de un solo uso/30 s en `/api/notificaciones/ticket/`, nunca JWT en query strings; orígenes permitidos y grupo por usuario. El plan gratuito mantiene `NOTIFICACIONES_WS=False`.
+
+El proxy verifica HS256, emisor netlify, expiración, sitio y contexto production antes de confiar en la IP. `EXIGIR_PROXY_NETLIFY=True` bloquea `/api/*` directo excepto salud. La API añade no-store/private y Vary por sesión; producción solo JSON (Accept exclusivo de HTML da 406 JSON), desarrollo conserva API navegable. `GET /api/salud/` no expone secretos. Consultar [DEPLOY.md](DEPLOY.md) para Gmail, secretos, Netlify y mantenimiento mensual.
+
+## Validación y demo
+
+```bash
+pip install -r requirements-dev.txt
+python manage.py check
+python manage.py makemigrations --check --dry-run
+python manage.py test
+python manage.py seed_demo --con-ejemplos
 ```
 
-### Catálogos
-- `GET /api/catalogos/carreras/` → `[CarreraMini + "extensiones_material"]` (como hoy).
-- **Nuevo** `GET /api/catalogos/tipos/` → `[{ "id": "TESIS", "nombre": "Tesis" }, { "id": "PROYECTO_TITULO", "nombre": "Proyecto de título" }, { "id": "INFORME_PRACTICA", "nombre": "Informe de práctica" }]` (generado desde los `choices` del modelo).
-- `GET /api/catalogos/profesores-guia/` → `["Ana Pérez", ...]` (lista de strings, sin cambios).
+Pruebas con correo en memoria, PDFs temporales y una base anterior migrada en un proceso aislado. Se mantienen casos de JWT, importación, watermark, privacidad, proxy, revisión y notificaciones, adaptando el login retirado a contraseña.
 
-### Listado `GET /api/tesis/` (paginado `{count, next, previous, results}`)
-```json
-{ "id": 7, "titulo": "...", "resumen": "...(≤280)", "autores": ["Nombre 1", "Nombre 2"],
-  "carrera": CarreraMini, "anio": 2025, "tipo": { "id": "TESIS", "nombre": "Tesis" },
-  "profesor_guia": "Ana Pérez", "palabras_clave": ["web", "educación"],
-  "num_paginas": 7, "tiene_repositorio": true }
-```
-
-### Detalle `GET /api/tesis/{id}/` — también usado en cada item de `mis-tesis/` y `pendientes/`
-```json
-{ "id": 7, "titulo": "...", "resumen": "...", "palabras_clave": ["web", "educación"],
-  "tipo": { "id": "TESIS", "nombre": "Tesis" }, "anio": 2025, "semestre": 1,
-  "carrera": CarreraMini, "sede": Mini, "profesor_guia": "...",
-  "estado": "EN_REVISION", "estado_nombre": "En revisión", "observacion_revision": "",
-  "subido_por": UsuarioMini, "revisado_por": UsuarioMini | null,
-  "fecha_publicacion": "...", "num_paginas": 7, "tamano_bytes": 12345, "creado": "...", "actualizado": "...",
-  "autores": [{ "nombre_completo": "...", "email": "..." }],
-  "materiales": [{ "id": 3, "tipo": "REPOSITORIO", "titulo": "Repositorio", "descripcion": "",
-                   "url": "https://github.com/..." /* omitido si restringido */,
-                   "solo_carrera": true, "restringido": false, "creado": "..." }],
-  "pdf": "/api/tesis/7/pdf/",
-  "puede_editar": false, "puede_revisar": false, "puede_reenviar": false }
-```
-- `puede_editar` = `permisos.edita(usuario, tesis)`.
-- `puede_revisar` = `permisos.revisa(usuario, tesis) and tesis.estado == EN_REVISION`.
-- `puede_reenviar` = el usuario es autor/subió la tesis y está en BORRADOR o RECHAZADA.
-
-### Escritura `POST /api/tesis/` y `PATCH /api/tesis/{id}/` (multipart)
-| Campo | Formato |
-|---|---|
-| `titulo`, `resumen`, `profesor_guia` | texto |
-| `tipo` | código (`TESIS`, …) |
-| `carrera` | id |
-| `sede` | id **opcional**: si no viene, usar `usuario.sede`; si el usuario no tiene sede y hay **una sola** sede activa, usar esa; si no, error de validación en `sede` |
-| `anio`, `semestre` | número |
-| `palabras_clave` | aceptar **string separado por comas** (`"iot, web"`) **o** JSON de lista (`'["iot","web"]'`). Normalizar: trim, quitar vacíos, quitar duplicados sin importar mayúsculas, guardar como `"iot,web"` |
-| `autores` | JSON `[{"nombre_completo": "...", "email": "..."}]` (como hoy) |
-| `pdf` | archivo (obligatorio al crear) |
-| `repositorio_url` | URL GitHub opcional (como hoy) |
-| `publicar` | `"true"/"false"` (como hoy) |
-
-La respuesta de `POST`/`PATCH` es el **detalle** del contrato.
-
-### Autorizados `GET /api/admin/autorizados/`
-Cada item en lectura: `carrera`: CarreraMini | null, `area`: Mini | null, `sede`: Mini | null (en escritura siguen aceptando IDs). Implementarlo en `to_representation` del `AutorizadoSerializer`.
-
-
-## Sesiones seguras y cambios del frontend
-
-Al iniciar o renovar una sesión válida, `verificar-codigo/` y `refresh/` responden exclusivamente `{access, usuario}`. La cookie `tesiteca_refresh` es httpOnly, SameSite=Strict, Path=/api/auth/, con Secure en producción y una vida de siete días. El access dura diez minutos por defecto. Cada refresh rota la cookie e invalida el token anterior. El frontend debe abandonar localStorage y borrar tokens antiguos durante la actualización.
-
-Usar `credentials: "include"` en login, refresh y logout (también cuando en desarrollo la API tiene otro origen). Para restaurar sesión al cargar la página, llamar una sola vez a `POST /api/auth/refresh/`: devuelve access y usuario si la cookie es válida, o 204 sin body si no hay cookie. Una cookie inválida mantiene el 401 y se elimina. Centralizar las renovaciones en una única petición concurrente; reusar un refresh rotado da 401. En refresh y logout enviar `X-Requested-With: XMLHttpRequest`; si se envía Origin, debe coincidir exactamente con `CSRF_TRUSTED_ORIGINS`. Se limitan a 30 peticiones por minuto por IP. `logout/` devuelve 204 y revoca la cookie aun con access vencido. Logout revoca el refresh; el access previamente emitido conserva su vida de diez minutos mientras el usuario esté activo.
-
-En herramientas como curl, conservar las cookies con `-c cookies.txt` al verificar el código y usar `-b cookies.txt -c cookies.txt -H 'X-Requested-With: XMLHttpRequest'` para renovar. No versionar ni compartir ese archivo. El cuerpo enviado a refresh se ignora.
-
-La plantilla de autorizados sigue siendo compatible. Para desactivar/reactivar por importación, se puede añadir al final la columna opcional `activo`, con `true/false`, `1/0` o `sí/no`. Si se omite, conserva el estado anterior. PATCH, importación y admin sincronizan la activación del usuario y la blacklist.
-
-## Notificaciones
-
-Las notificaciones se guardan en SQLite y siempre están disponibles por REST. Solo se consultan y marcan las propias:
-
-- `GET /api/notificaciones/?leida=false&desde_id=123`: paginado, con IDs mayores al indicado, más recientes primero.
-- `GET /api/notificaciones/resumen/`: `{no_leidas, ultima_id}` (0 si no hay ninguna).
-- `POST /api/notificaciones/{id}/leer/`: 204; las ajenas devuelven 404.
-- `POST /api/notificaciones/leer-todas/`: `{actualizadas}`.
-- `POST /api/notificaciones/ticket/`: `{ticket, expira_en}`, limitado a 20/min por usuario.
-
-Cada elemento tiene `id, tipo, titulo, mensaje, enlace, datos, leida, creada`. El envío a revisión y el reenvío avisan al coordinador de la carrera y a los directores del área. La aprobación y el rechazo avisan a quien subió la tesis y a los autores vinculados. Se excluyen duplicados, usuarios inactivos y el actor. Los avisos se crean en la transacción de la tesis; la entrega ocurre después del commit. Los fallos de SMTP o WebSocket se registran sin revertir la operación.
-
-Con `NOTIFICACIONES_WS=False`, el front debe usar polling. Con `True`, solicitar un ticket mediante JWT y abrir `wss://DOMINIO-ASGI/ws/notificaciones/?ticket=...`. No poner access ni refresh en query strings. El ticket es aleatorio, en la base solo queda su SHA-256, vence en 30 segundos y se consume una sola vez. Validar el origen con `WS_ALLOWED_ORIGINS` y pedir otro ticket en cada reconexión. Socket inválido: 4401; WS deshabilitado: 4403. Nunca usar el socket para marcar leídas ni modificar datos.
-
-Al conectar se recibe `{tipo: "resumen", no_leidas, ultima_id}`. Cada aviso nuevo llega como `{tipo: "notificacion", notificacion: {...}}`. El cliente puede enviar `{tipo: "ping"}` y recibirá `{tipo: "pong"}`. Ante desconexión, recuperar el historial por REST. Si el polling devuelve varias páginas, recorrerlas antes de avanzar el cursor `desde_id`, para no perder avisos entre páginas.
-
-Dependencias separadas: `requirements.txt` es la instalación WSGI de producción; `requirements-asgi.txt` añade Uvicorn y Redis para un plan futuro; `requirements-dev.txt` añade Daphne para `channels.testing.WebsocketCommunicator`. Instalar este último para ejecutar todas las pruebas. [DEPLOY.md](DEPLOY.md) incluye los pasos, verificación y rutina mensual de la cuenta gratuita.
-
-## Salud y proxy firmado
-
-`GET /api/salud/` es público (30/min), comprueba `SELECT 1` y devuelve estado, versión, debug, vía de acceso, modo de notificaciones, correo y estado de la base, sin secretos. La versión es el hash corto Git y, si no se puede obtener, `APP_VERSION` o `dev`.
-
-`NETLIFY_PROXY_SECRET`, `NETLIFY_SITE_URL` y `EXIGIR_PROXY_NETLIFY` controlan la validación del JWS `x-nf-sign`. Solo se admite HS256, emisor netlify, expiración obligatoria con 30 s de tolerancia, sitio exacto y contexto production. La IP de `x-nf-client-connection-ip` solo se acepta tras esa validación; en otro caso se usa REMOTE_ADDR. Con exigencia activada se bloquea `/api/*` sin firma válida, excepto `/api/salud/`; `/admin/` y `/static/` siguen disponibles. No registrar firmas ni secretos.
-
-La API añade `Cache-Control: no-store, private` si no tiene una política explícita y combina `Vary: Authorization, Cookie` con los valores existentes. El PDF mantiene `Cache-Control: no-store`. Los comandos `mantenimiento` y `verificar_deploy` se documentan en [DEPLOY.md](DEPLOY.md).
+Demo: demo1/demo2 estudiantes IEI; demo3 estudiante AP; demo4 coordinador AP; demo5 coordinador IEI; demo6 director del área; todos en `@inacapmail.cl` como fixtures ficticios heredados. Sus cuentas existentes usan recuperación para establecer contraseña. Solo las cuentas reales nuevas respetan la regla de dominio del registro. 15 tesis: 11 publicadas, 3 en revisión, 1 rechazada. `--reset-ejemplos` reemplaza las tesis «Demo » y sus PDFs; no usar en producción sin revisar los datos que se van a eliminar.

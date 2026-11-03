@@ -145,9 +145,17 @@ class TesisViewSet(viewsets.ModelViewSet):
             raise PermissionDenied()
         qs = self.get_queryset().filter(estado=Estado.EN_REVISION)
         if u.rol == Rol.COORDINADOR:
-            qs = qs.filter(carrera_id=u.carrera_id) if u.carrera_id else qs.none()
+            qs = (
+                qs.filter(carrera_id=u.carrera_id, sede_id=u.sede_id)
+                if u.carrera_id
+                else qs.none()
+            )
         elif u.rol == Rol.DIRECTOR:
-            qs = qs.filter(carrera__area_id=u.area_id) if u.area_id else qs.none()
+            qs = (
+                qs.filter(carrera__area_id=u.area_id, sede_id=u.sede_id)
+                if u.area_id
+                else qs.none()
+            )
         elif u.rol != Rol.ADMIN:
             raise PermissionDenied()
         pagina = self.paginate_queryset(self.filter_queryset(qs))

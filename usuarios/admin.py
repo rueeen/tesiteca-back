@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from .forms import CrearUsuarioForm, EditarUsuarioForm
-from .models import Usuario, UsuarioAutorizado, ImportacionLote, CodigoAcceso
+from .models import Usuario, UsuarioAutorizado, ImportacionLote
 
 
 @admin.register(Usuario)
@@ -16,7 +16,18 @@ class UsuarioAdmin(UserAdmin):
         (None, {"fields": ("email", "password")}),
         (
             "Datos",
-            {"fields": ("rut", "nombre_completo", "rol", "carrera", "area", "sede")},
+            {
+                "fields": (
+                    "rut",
+                    "nombre_completo",
+                    "rol",
+                    "carrera",
+                    "area",
+                    "sede",
+                    "estado_cuenta",
+                    "email_verificado_en",
+                )
+            },
         ),
         (
             "Permisos",
@@ -34,7 +45,18 @@ class UsuarioAdmin(UserAdmin):
     add_fieldsets = (
         (
             None,
-            {"fields": ("email", "nombre_completo", "password1", "password2", "rol")},
+            {
+                "fields": (
+                    "email",
+                    "nombre_completo",
+                    "password1",
+                    "password2",
+                    "rol",
+                    "carrera",
+                    "area",
+                    "sede",
+                )
+            },
         ),
     )
 
@@ -61,12 +83,7 @@ class LoteAdmin(admin.ModelAdmin):
     exclude = ["archivo"]
 
 
-@admin.register(CodigoAcceso)
-class CodigoAdmin(admin.ModelAdmin):
-    list_display = ["email", "expira_en", "intentos", "usado"]
-    list_filter = ["usado"]
-    search_fields = ["email"]
-    exclude = ["codigo_hash"]
+from .models import SolicitudAcceso, IntentoLogin
 
-    def has_add_permission(self, request):
-        return False
+admin.site.register(SolicitudAcceso)
+admin.site.register(IntentoLogin)

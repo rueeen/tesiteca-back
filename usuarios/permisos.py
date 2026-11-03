@@ -5,6 +5,9 @@ from .models import Rol
 def puede_administrar(usuario, datos):
     rol = datos.get("rol")
     carrera = datos.get("carrera")
+    sede = datos.get("sede")
+    if usuario.rol != Rol.ADMIN and (not sede or sede.pk != usuario.sede_id):
+        return False
     if usuario.rol == Rol.ADMIN:
         return True
     if usuario.rol == Rol.COORDINADOR:

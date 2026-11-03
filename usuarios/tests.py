@@ -12,7 +12,7 @@ from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken
 from academico.models import Area, Carrera, Sede
-from .models import Usuario, UsuarioAutorizado, CodigoAcceso, Rol
+from .models import Usuario, UsuarioAutorizado, EstadoCuenta, Rol
 
 
 @override_settings(
@@ -35,14 +35,11 @@ class SeguridadTests(APITestCase):
         )
 
     def iniciar(self):
-        CodigoAcceso.objects.create(
-            email=self.usuario.email,
-            codigo_hash=make_password("123456"),
-            expira_en=timezone.now() + timedelta(minutes=10),
-        )
+        self.usuario.set_password("Clave-prueba-segura-2026")
+        self.usuario.save()
         r = self.client.post(
-            "/api/auth/verificar-codigo/",
-            {"email": self.usuario.email, "codigo": "123456"},
+            "/api/auth/login/",
+            {"email": self.usuario.email, "password": "Clave-prueba-segura-2026"},
         )
         self.assertEqual(r.status_code, 200, r.data)
         return r
@@ -181,14 +178,12 @@ class SeguridadTests(APITestCase):
     def test_refresh_revisa_lista_blanca_y_usuario_activo(self):
         for tipo in ["ausente", "usuario_inactivo"]:
             with self.subTest(tipo=tipo):
-                self.usuario.is_active = True
-                self.usuario.save()
+                self.usuario.cambiar_estado(EstadoCuenta.ACTIVA)
                 token = RefreshToken.for_user(self.usuario)
                 if tipo == "ausente":
                     self.autorizado.delete()
                 else:
-                    self.usuario.is_active = False
-                    self.usuario.save()
+                    self.usuario.cambiar_estado(EstadoCuenta.DESACTIVADA)
                 self.client.cookies[settings.REFRESH_COOKIE_NAME] = str(token)
                 self.assertEqual(self.renovar().status_code, 401)
                 self.assertTrue(

@@ -5,7 +5,7 @@ from django.conf import settings
 from django.core.management import BaseCommand, call_command
 from django.db.models import Q
 from django.utils import timezone
-from usuarios.models import CodigoAcceso, ImportacionLote
+from usuarios.models import IntentoLogin, ImportacionLote, Usuario, EstadoCuenta
 from notificaciones.models import TicketWS, Notificacion
 
 
@@ -30,8 +30,12 @@ class Command(BaseCommand):
         ahora = timezone.now()
         call_command("flushexpiredtokens", stdout=self.stdout)
         self.stdout.write("Tokens JWT vencidos: limpieza completada")
-        codigos = CodigoAcceso.objects.filter(
-            creado__lt=ahora - timedelta(days=1)
+        intentos = IntentoLogin.objects.filter(
+            creado__lt=ahora - timedelta(days=30)
+        ).delete()[0]
+        cuentas = Usuario.objects.filter(
+            estado_cuenta=EstadoCuenta.PENDIENTE_VERIFICACION,
+            date_joined__lt=ahora - timedelta(days=7),
         ).delete()[0]
         tickets = TicketWS.objects.filter(
             Q(expira_en__lte=ahora) | Q(usado=True)
@@ -48,7 +52,7 @@ class Command(BaseCommand):
             leida=True, creada__lt=ahora - timedelta(days=180)
         ).delete()[0]
         self.stdout.write(
-            f"Códigos eliminados: {codigos}; tickets eliminados: {tickets}; archivos de importación eliminados: {archivos}; notificaciones leídas eliminadas: {notificaciones}"
+            f"Intentos eliminados: {intentos}; cuentas sin verificar eliminadas: {cuentas}; tickets eliminados: {tickets}; archivos de importación eliminados: {archivos}; notificaciones leídas eliminadas: {notificaciones}"
         )
         rutas = [
             ("Archivos privados", settings.PRIVATE_MEDIA_ROOT),

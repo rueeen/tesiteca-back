@@ -7,11 +7,17 @@ from rest_framework import serializers
 from usuarios.models import Rol
 from usuarios.serializers import UsuarioMiniSerializer
 from academico.models import Sede
-from academico.serializers import CarreraMiniSerializer, MiniSerializer, tipo_mini
+from academico.serializers import (
+    CarreraMiniSerializer,
+    MiniSerializer,
+    SedeMiniSerializer,
+    tipo_mini,
+)
 from .palabras_clave import PalabrasClaveField, palabras_clave_lista
 from .models import Tesis, AutorTesis, MaterialAdicional, Estado
 from .permisos import material_visible, edita, revisa, puede_reenviar
 from .servicios import guardar_tesis
+from .texto import normalizar_resumen, resumen_breve
 
 REPOSITORIO = re.compile(r"^https://github\.com/[\w.-]+/[\w.-]+/?$")
 
@@ -92,6 +98,8 @@ class TesisListaSerializer(serializers.ModelSerializer):
     autores = serializers.SerializerMethodField()
     carrera = CarreraMiniSerializer(read_only=True)
     tipo = serializers.SerializerMethodField()
+    periodo = serializers.SerializerMethodField()
+    periodo_texto = serializers.SerializerMethodField()
     resumen = serializers.SerializerMethodField()
     palabras_clave = serializers.SerializerMethodField()
     tiene_repositorio = serializers.SerializerMethodField()
@@ -105,21 +113,37 @@ class TesisListaSerializer(serializers.ModelSerializer):
             "autores",
             "carrera",
             "anio",
+            "periodo_texto",
             "tipo",
             "profesor_guia",
             "palabras_clave",
             "num_paginas",
             "tiene_repositorio",
+            "periodo",
         ]
 
     def get_autores(self, obj):
         return [a.nombre_completo for a in obj.autores.all()]
 
     def get_resumen(self, obj):
-        return obj.resumen[:280]
+        return resumen_breve(obj.resumen)
 
     def get_palabras_clave(self, obj):
         return palabras_clave_lista(obj.palabras_clave)
+
+    def get_periodo(self, obj):
+        return (
+            {
+                "id": obj.periodo,
+                "nombre": "Primer semestre" if obj.periodo == 1 else "Segundo semestre",
+            }
+            if obj.periodo
+            else None
+        )
+
+    def get_periodo_texto(self, obj):
+        periodo = self.get_periodo(obj)
+        return f"{obj.anio} · {periodo['nombre']}" if periodo else str(obj.anio)
 
     def get_tipo(self, obj):
         return tipo_mini(obj.tipo)
@@ -133,8 +157,10 @@ class TesisDetalleSerializer(serializers.ModelSerializer):
     materiales = MaterialSerializer(many=True, read_only=True)
     pdf = serializers.SerializerMethodField()
     carrera = CarreraMiniSerializer(read_only=True)
-    sede = MiniSerializer(read_only=True)
+    sede = SedeMiniSerializer(read_only=True)
     tipo = serializers.SerializerMethodField()
+    periodo = serializers.SerializerMethodField()
+    periodo_texto = serializers.SerializerMethodField()
     palabras_clave = PalabrasClaveField(read_only=True)
     subido_por = UsuarioMiniSerializer(read_only=True)
     revisado_por = UsuarioMiniSerializer(read_only=True)
@@ -152,7 +178,8 @@ class TesisDetalleSerializer(serializers.ModelSerializer):
             "palabras_clave",
             "tipo",
             "anio",
-            "semestre",
+            "periodo_texto",
+            "periodo",
             "carrera",
             "sede",
             "profesor_guia",
@@ -173,6 +200,20 @@ class TesisDetalleSerializer(serializers.ModelSerializer):
             "puede_revisar",
             "puede_reenviar",
         ]
+
+    def get_periodo(self, obj):
+        return (
+            {
+                "id": obj.periodo,
+                "nombre": "Primer semestre" if obj.periodo == 1 else "Segundo semestre",
+            }
+            if obj.periodo
+            else None
+        )
+
+    def get_periodo_texto(self, obj):
+        periodo = self.get_periodo(obj)
+        return f"{obj.anio} · {periodo['nombre']}" if periodo else str(obj.anio)
 
     def get_tipo(self, obj):
         return tipo_mini(obj.tipo)
@@ -208,6 +249,9 @@ class AutoresJSON(serializers.Field):
 
 
 class TesisEscrituraSerializer(serializers.ModelSerializer):
+    def validate_resumen(self, valor):
+        return normalizar_resumen(valor)
+
     sede = serializers.PrimaryKeyRelatedField(
         queryset=Sede.objects.all(), required=False
     )
@@ -227,7 +271,7 @@ class TesisEscrituraSerializer(serializers.ModelSerializer):
             "palabras_clave",
             "tipo",
             "anio",
-            "semestre",
+            "periodo",
             "carrera",
             "sede",
             "profesor_guia",
@@ -270,6 +314,8 @@ class TesisEscrituraSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Solo puedes subir a tu carrera")
         if usuario.rol == Rol.DIRECTOR and usuario.area_id != carrera.area_id:
             raise serializers.ValidationError("Solo puedes subir a tu área")
+        if usuario.rol != Rol.ADMIN and usuario.sede_id != sede.id:
+            raise serializers.ValidationError({"sede": "Solo puedes subir a tu sede"})
         if datos.get("repositorio_url"):
             validar_repositorio(datos["repositorio_url"], carrera)
         if self.instance and carrera.pk != self.instance.carrera_id:

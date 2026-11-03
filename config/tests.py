@@ -13,7 +13,7 @@ from django.http import JsonResponse, HttpResponse
 from django.test import override_settings
 from django.utils import timezone
 from rest_framework.test import APITestCase, APIRequestFactory
-from usuarios.models import Usuario, CodigoAcceso, ImportacionLote
+from usuarios.models import Usuario, IntentoLogin, ImportacionLote
 from notificaciones.models import TicketWS, Notificacion
 from tesis.views import ip_cliente
 from .middleware import ProxyNetlifyMiddleware
@@ -183,7 +183,7 @@ class ProxyTests(APITestCase):
 class ComandosDeployTests(APITestCase):
     def setUp(self):
         self.usuario = Usuario.objects.create_user(
-            "mantenimiento@inacap.cl", nombre_completo="Mantenimiento"
+            "mantenimiento@inacap.cl", nombre_completo="Mantenimiento", rol="ADMIN"
         )
 
     def test_mantenimiento_limpia_solo_datos_vencidos_y_archivo_importacion(self):
@@ -194,14 +194,14 @@ class ComandosDeployTests(APITestCase):
         )
 
         ahora = timezone.now()
-        viejo = CodigoAcceso.objects.create(
-            email=self.usuario.email, codigo_hash="hash", expira_en=ahora
+        viejo = IntentoLogin.objects.create(
+            email=self.usuario.email, ip="127.0.0.1", exitoso=False
         )
-        CodigoAcceso.objects.filter(pk=viejo.pk).update(
-            creado=ahora - timedelta(days=2)
+        IntentoLogin.objects.filter(pk=viejo.pk).update(
+            creado=ahora - timedelta(days=31)
         )
-        actual = CodigoAcceso.objects.create(
-            email=self.usuario.email, codigo_hash="hash", expira_en=ahora
+        actual = IntentoLogin.objects.create(
+            email=self.usuario.email, ip="127.0.0.1", exitoso=False
         )
         vencido = TicketWS.objects.create(
             usuario=self.usuario,
@@ -282,7 +282,7 @@ class ComandosDeployTests(APITestCase):
                 self.assertFalse(lote.archivo)
                 self.assertIn("400 MiB", salida.getvalue())
         self.assertEqual(
-            list(CodigoAcceso.objects.values_list("pk", flat=True)), [actual.pk]
+            list(IntentoLogin.objects.values_list("pk", flat=True)), [actual.pk]
         )
         self.assertEqual(
             list(TicketWS.objects.values_list("pk", flat=True)), [vigente.pk]

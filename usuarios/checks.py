@@ -9,7 +9,8 @@ def comprobar_produccion(app_configs, **kwargs):
         if settings.EMAIL_BACKEND == "django.core.mail.backends.console.EmailBackend":
             avisos.append(
                 Warning(
-                    "Los códigos de login no llegarán por correo", id="usuarios.W001"
+                    "Los enlaces de verificación y recuperación no llegarán por correo",
+                    id="usuarios.W001",
                 )
             )
         if not settings.SECURE_COOKIES:

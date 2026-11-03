@@ -6,10 +6,15 @@ from tesis.models import Tesis
 from tesis.permisos import visibles
 
 
-class SedeSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Sede
-        fields = ["id", "nombre", "ciudad"]
+from .serializers import SedeMiniSerializer, CarreraMiniSerializer, MiniSerializer
+from .opciones import Region, NivelFormacion
+from rest_framework import viewsets
+from rest_framework.permissions import BasePermission, AllowAny
+
+
+class CarreraSerializer(CarreraMiniSerializer):
+    class Meta(CarreraMiniSerializer.Meta):
+        fields = CarreraMiniSerializer.Meta.fields + ["extensiones_material"]
 
 
 class AreaSerializer(serializers.ModelSerializer):
@@ -18,22 +23,45 @@ class AreaSerializer(serializers.ModelSerializer):
         fields = ["id", "nombre"]
 
 
-class CarreraSerializer(serializers.ModelSerializer):
+class SedeAdminSerializer(serializers.ModelSerializer):
     class Meta:
-        model = Carrera
-        fields = [
-            "id",
-            "nombre",
-            "codigo",
-            "area",
-            "permite_repositorio",
-            "extensiones_material",
-        ]
+        model = Sede
+        fields = ["id", "nombre", "ciudad", "region", "orden", "activa"]
+
+
+class EsAdmin(BasePermission):
+    def has_permission(self, request, view):
+        return request.user.is_authenticated and request.user.rol == "ADMIN"
+
+
+class SedesAdmin(viewsets.ModelViewSet):
+    permission_classes = [EsAdmin]
+    serializer_class = SedeAdminSerializer
+    queryset = Sede.objects.all()
+    http_method_names = ["get", "post", "patch", "head", "options"]
+
+
+class Regiones(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request):
+        return Response([{"id": c, "nombre": n} for c, n in Region.choices])
+
+
+class Niveles(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request):
+        return Response([{"id": c, "nombre": n} for c, n in NivelFormacion.choices])
 
 
 class Sedes(generics.ListAPIView):
-    queryset = Sede.objects.filter(activa=True).order_by("nombre")
-    serializer_class = SedeSerializer
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    queryset = Sede.objects.filter(activa=True).order_by("orden", "nombre")
+    serializer_class = SedeMiniSerializer
     pagination_class = None
 
 
@@ -44,6 +72,8 @@ class Areas(generics.ListAPIView):
 
 
 class Carreras(generics.ListAPIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
     queryset = Carrera.objects.filter(activa=True, area__activa=True).order_by("nombre")
     serializer_class = CarreraSerializer
     pagination_class = None
