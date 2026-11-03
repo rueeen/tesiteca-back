@@ -95,6 +95,7 @@ class MaterialSerializer(serializers.ModelSerializer):
 
 
 class TesisListaSerializer(serializers.ModelSerializer):
+    sede = SedeMiniSerializer(read_only=True)
     autores = serializers.SerializerMethodField()
     carrera = CarreraMiniSerializer(read_only=True)
     tipo = serializers.SerializerMethodField()
@@ -112,6 +113,7 @@ class TesisListaSerializer(serializers.ModelSerializer):
             "resumen",
             "autores",
             "carrera",
+            "sede",
             "anio",
             "periodo_texto",
             "tipo",

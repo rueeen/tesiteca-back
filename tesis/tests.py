@@ -1278,3 +1278,38 @@ class BackendTests(APITestCase):
                 self.assertEqual(migracion.normalizar_resumen(resultado), resultado)
         self.assertEqual(normalizar_resumen(None), "")
         self.assertEqual(normalizar_resumen(""), "")
+
+    def test_listado_incluye_sede_y_consultas_constantes(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        self.login(self.admin)
+        for i in range(2):
+            self.tesis(titulo=f"Listado con sede {i}")
+        with CaptureQueriesContext(connection) as consultas:
+            inicial = self.client.get("/api/tesis/")
+        cantidad_consultas = len(consultas)
+        self.assertEqual(inicial.status_code, 200)
+        self.assertEqual(inicial.data["count"], 2)
+
+        for i in range(2, 10):
+            self.tesis(titulo=f"Listado con sede {i}")
+        with self.assertNumQueries(cantidad_consultas):
+            completo = self.client.get("/api/tesis/")
+        self.assertEqual(completo.status_code, 200)
+        self.assertEqual(completo.data["count"], 10)
+        self.assertEqual(len(completo.data["results"]), 10)
+        esperado = {
+            "id": self.sede.pk,
+            "nombre": "Arica",
+            "ciudad": "Arica",
+            "region": {"id": "XV", "nombre": "Arica y Parinacota"},
+        }
+        for respuesta in (inicial, completo):
+            for item in respuesta.data["results"]:
+                with self.subTest(tesis=item["id"]):
+                    self.assertEqual(item["sede"], esperado)
+                    self.assertEqual(item["sede"]["nombre"], "Arica")
+                    self.assertEqual(
+                        item["sede"]["region"]["nombre"], "Arica y Parinacota"
+                    )

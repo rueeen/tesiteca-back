@@ -65,6 +65,7 @@ class TesisViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = visibles(
+            # sede.region es un campo choices, no otra relación: basta cargar sede.
             Tesis.objects.select_related(
                 "carrera__area", "sede", "subido_por", "revisado_por"
             ).prefetch_related("autores", "materiales"),
