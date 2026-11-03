@@ -8,7 +8,4 @@ pypdf==6.21.4
 reportlab==5.1.0
 openpyxl==3.1.5
 channels==4.3.2
-channels-redis==4.3.0
-uvicorn[standard]==0.54.0
-# Requerido por channels.testing; el servidor de producción sigue siendo Uvicorn.
-daphne==4.2.3
+PyJWT==2.15.1

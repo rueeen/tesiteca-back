@@ -1,2 +1,3 @@
-# Alias para instalación de desarrollo; incluye las dependencias de pruebas.
--r requirements.txt
+-r requirements-asgi.txt
+# Requerido por channels.testing; producción WSGI no lo utiliza.
+daphne==4.2.3

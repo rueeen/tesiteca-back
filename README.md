@@ -7,7 +7,7 @@ Backend Django 5.2, DRF y SQLite para la demo de Informática, Ciberseguridad y 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 cp .env.example .env
 python -c "import secrets; print(secrets.token_urlsafe(64))"
 # Copiar el resultado a SECRET_KEY en .env; configurar SEED_ADMIN_EMAIL.
@@ -90,34 +90,15 @@ Se valida firma `%PDF`, tamaño, lectura completa, ausencia de cifrado y SHA-256
 ```bash
 python manage.py check
 python manage.py makemigrations --check --dry-run
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 python manage.py test
 ```
 
 Las pruebas usan SQLite temporal, correo en memoria y archivos aislados: login/JWT, límites y expiración, importación/upsert y permisos, visibilidad, revisión, materiales, PDF cifrado/duplicado, rotación, marcas, descarga autenticada y rollback. El seed se puede ejecutar dos veces sin duplicar las tesis de ejemplo, también con `--reset-ejemplos`.
 
-## PythonAnywhere
+## Despliegue
 
-1. Clonar el repositorio en una consola Bash y crear un virtualenv Python 3.11+; instalar `requirements.txt`.
-2. Crear `.env` con SECRET_KEY nuevo, `DEBUG=False`, `ALLOWED_HOSTS=tuusuario.pythonanywhere.com`, el origen HTTPS del frontend y SMTP. Usar `PRIVATE_MEDIA_ROOT=/home/tuusuario/privado/tesis` y permisos restringidos.
-3. En la carpeta del proyecto ejecutar `python manage.py migrate`, `python manage.py seed_demo` y `python manage.py collectstatic --noinput`. Crear superusuario si se necesita el panel.
-4. Crear una web app manual de Python y seleccionar el virtualenv. WSGI:
-
-```python
-import os
-import sys
-ruta = '/home/tuusuario/tesiteca-back'
-sys.path.insert(0, ruta)
-os.environ['DJANGO_SETTINGS_MODULE'] = 'config.settings'
-from django.core.wsgi import get_wsgi_application
-application = get_wsgi_application()
-```
-
-5. En Web mapear solamente `/static/` a `staticfiles/`. **PRIVATE_MEDIA_ROOT no debe mapearse como static ni como media pública**. No añadir rutas de Django para servirlo.
-6. Recargar la app y comprobar login, biblioteca y PDF autenticado. Configurar límites de subida del hosting para los tamaños elegidos, SMTP permitido por el plan y HTTPS. Respaldar SQLite y archivos privados; no usar `runserver` en producción. Revisar `python manage.py check --deploy` y activar cookies seguras/redirección HTTPS según la configuración real del proxy del hosting.
-
-El despliegue real en PythonAnywhere y el envío SMTP requieren la cuenta y configuración del propietario; no forman parte de la validación local.
-
+Consultar [DEPLOY.md](DEPLOY.md) para la cuenta gratuita de **rvavalencia**, con backend `https://rvavalencia.pythonanywhere.com` y frontend `https://tesiteca-inacap.netlify.app`. Usar `.env.produccion.example`, proxy Netlify firmado, WSGI sin WebSockets y mantenimiento mensual manual.
 
 ## Usuarios demo
 
@@ -248,76 +229,12 @@ Con `NOTIFICACIONES_WS=False`, el front debe usar polling. Con `True`, solicitar
 
 Al conectar se recibe `{tipo: "resumen", no_leidas, ultima_id}`. Cada aviso nuevo llega como `{tipo: "notificacion", notificacion: {...}}`. El cliente puede enviar `{tipo: "ping"}` y recibirá `{tipo: "pong"}`. Ante desconexión, recuperar el historial por REST. Si el polling devuelve varias páginas, recorrerlas antes de avanzar el cursor `desde_id`, para no perder avisos entre páginas.
 
-`pip install -r requirements.txt` incluye todo lo necesario para ejecutar las pruebas, incluido Daphne para `channels.testing.WebsocketCommunicator`. El despliegue ASGI sigue usando Uvicorn. `requirements-dev.txt` queda como alias de la misma instalación.
+Dependencias separadas: `requirements.txt` es la instalación WSGI de producción; `requirements-asgi.txt` añade Uvicorn y Redis para un plan futuro; `requirements-dev.txt` añade Daphne para `channels.testing.WebsocketCommunicator`. Instalar este último para ejecutar todas las pruebas. [DEPLOY.md](DEPLOY.md) incluye los pasos, verificación y rutina mensual de la cuenta gratuita.
 
-## Deploy en PythonAnywhere
+## Salud y proxy firmado
 
-### 1. API REST en la web app WSGI
+`GET /api/salud/` es público (30/min), comprueba `SELECT 1` y devuelve estado, versión, debug, vía de acceso, modo de notificaciones, correo y estado de la base, sin secretos. La versión es el hash corto Git y, si no se puede obtener, `APP_VERSION` o `dev`.
 
-Crear el virtualenv Python 3.11+, instalar `requirements.txt` y configurar la web app manual como se indica en la sección PythonAnywhere anterior. `config/wsgi.py` permanece sin cambios. Copiar `.env.example` a `.env`, generar una SECRET_KEY y mantener el archivo privado. Para producción:
+`NETLIFY_PROXY_SECRET`, `NETLIFY_SITE_URL` y `EXIGIR_PROXY_NETLIFY` controlan la validación del JWS `x-nf-sign`. Solo se admite HS256, emisor netlify, expiración obligatoria con 30 s de tolerancia, sitio exacto y contexto production. La IP de `x-nf-client-connection-ip` solo se acepta tras esa validación; en otro caso se usa REMOTE_ADDR. Con exigencia activada se bloquea `/api/*` sin firma válida, excepto `/api/salud/`; `/admin/` y `/static/` siguen disponibles. No registrar firmas ni secretos.
 
-```dotenv
-DEBUG=False
-ALLOWED_HOSTS=USUARIO.pythonanywhere.com
-FRONTEND_URL=https://tesiteca.netlify.app
-CSRF_TRUSTED_ORIGINS=https://tesiteca.netlify.app
-CORS_ALLOWED_ORIGINS=
-WS_ALLOWED_ORIGINS=https://tesiteca.netlify.app
-SECURE_COOKIES=True
-SECURE_SSL_REDIRECT=True
-SECURE_HSTS_SECONDS=31536000
-TRUSTED_IP_HEADER=HTTP_X_NF_CLIENT_CONNECTION_IP
-NOTIFICACIONES_WS=False
-```
-
-Verificar HTTPS antes de activar HSTS; HSTS afecta conexiones futuras durante el plazo configurado. `check --deploy` puede advertir sobre incluir subdominios y sobre preload: ambas políticas se dejan desactivadas, sin silenciar los checks, hasta decidirlas con el propietario del dominio. Alternativamente activar **Force HTTPS** en la pestaña Web de PythonAnywhere. La aplicación de producción interpreta `X-Forwarded-Proto` como indicación HTTPS: solo debe recibir tráfico de proxies controlados que sobrescriban esa cabecera.
-
-```bash
-python manage.py migrate
-python manage.py collectstatic --noinput
-python manage.py check --deploy
-```
-
-Mapear únicamente `/static/` a `staticfiles/`. **No mapear PRIVATE_MEDIA_ROOT como estático ni como media pública**. Recargar la web app y probar login, renovación por cookie, publicación y notificaciones REST.
-
-### 2. SMTP
-
-Las cuentas gratuitas de PythonAnywhere solo permiten SMTP de Gmail; las pagadas pueden usar otros servidores, incluido el institucional.
-
-1. En la cuenta Google de envío, activar verificación en dos pasos.
-2. En Cuenta Google → Seguridad → Contraseñas de aplicaciones, generar una contraseña de aplicación de 16 caracteres (no usar la contraseña normal).
-3. Configurar `EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend`, `EMAIL_HOST=smtp.gmail.com`, `EMAIL_PORT=587`, `EMAIL_USE_TLS=True`, `EMAIL_TIMEOUT=10`, `EMAIL_HOST_USER` con la cuenta Gmail y `EMAIL_HOST_PASSWORD` con esa contraseña. `DEFAULT_FROM_EMAIL` debe usar la misma cuenta Gmail. Los valores se guardan exclusivamente en configuración privada.
-4. Desde la consola de PythonAnywhere ejecutar `python manage.py probar_correo destino@inacap.cl`. Muestra host, puerto y usuario, nunca la contraseña; en caso de fallo muestra el error del transporte. Comprobar la recepción antes de abrir el sistema.
-5. Si se desean correos de aprobación/rechazo además de avisos en la app, configurar `NOTIFICAR_POR_CORREO=True`.
-
-`manage.py check` advierte en producción si se dejó correo de consola o cookies inseguras. El timeout evita que un SMTP caído deje la petición indefinidamente abierta. El envío SMTP real depende de las credenciales y del plan del propietario; las pruebas locales usan el backend de memoria.
-
-### 3. Mantenimiento diario
-
-En Tasks de PythonAnywhere programar diariamente, usando el Python del virtualenv y el directorio del proyecto:
-
-```bash
-cd /home/USUARIO/tesiteca-back && /home/USUARIO/.virtualenvs/tesiteca/bin/python manage.py flushexpiredtokens
-```
-
-Conservar respaldos de SQLite y los archivos privados. Los tickets WS caducados no permiten autenticarse; pueden purgarse periódicamente según la política de retención de la instalación.
-
-### 4. WebSocket opcional: app ASGI beta independiente
-
-La web app WSGI normal de PythonAnywhere **no soporta WebSockets**. Si se necesita tiempo real, crear una segunda web app ASGI mediante CLI/API siguiendo la ayuda **ASGI command line** de PythonAnywhere y configurar, desde el directorio del proyecto y su virtualenv:
-
-```bash
-uvicorn config.asgi:application --uds ${DOMAIN_SOCKET}
-```
-
-Configurar `NOTIFICACIONES_WS=True` y un `REDIS_URL` accesible, con autenticación/TLS según el proveedor. La app WSGI y la app ASGI deben compartir la **misma base de datos**, SECRET_KEY y configuración de Redis; los tickets se validan en la base y Redis distribuye los avisos entre procesos. No usar copias independientes de SQLite. Permitir el origen Netlify en `WS_ALLOWED_ORIGINS` y usar el dominio ASGI en el frontend.
-
-Sin Redis, `InMemoryChannelLayer` solo sirve cuando HTTP y WS se atienden en **el mismo proceso ASGI**. No comunica una web app WSGI con otra ASGI, ni varios workers. Para la topología de dos apps, si no hay Redis dejar `NOTIFICACIONES_WS=False` y usar polling.
-
-Prueba ASGI local de un único proceso: `NOTIFICACIONES_WS=True uvicorn config.asgi:application --host 127.0.0.1 --port 8001 --no-access-log`. No habilitar logs de URLs con tickets en producción.
-
-### 5. Proxy Netlify
-
-Netlify debe redirigir `/api/*` hacia la API de PythonAnywhere (consultar el README del frontend). Para el navegador, API y frontend comparten origen: la cookie es first-party y SameSite=Strict también funciona en Safari/iOS. En producción no hace falta CORS para esa ruta. Los WebSockets conectan directamente a la app ASGI, con ticket y validación de origen.
-
-Configurar `TRUSTED_IP_HEADER=HTTP_X_NF_CLIENT_CONNECTION_IP` **solo cuando el tráfico de la API pasa por el proxy controlado de Netlify**, y asegurar que no se admita una cabecera manipulada por accesos directos al backend. Si no se puede garantizar, dejarla vacía: se usa REMOTE_ADDR. Una cabecera inválida también vuelve a REMOTE_ADDR. La IP real se incorpora a las marcas de agua y al registro de accesos.
+La API añade `Cache-Control: no-store, private` si no tiene una política explícita y combina `Vary: Authorization, Cookie` con los valores existentes. El PDF mantiene `Cache-Control: no-store`. Los comandos `mantenimiento` y `verificar_deploy` se documentan en [DEPLOY.md](DEPLOY.md).

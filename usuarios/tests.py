@@ -235,12 +235,11 @@ class SeguridadTests(APITestCase):
         request = APIRequestFactory().get(
             "/", REMOTE_ADDR="127.0.0.1", HTTP_X_NF_CLIENT_CONNECTION_IP="203.0.113.9"
         )
-        with override_settings(TRUSTED_IP_HEADER=""):
-            self.assertEqual(ip_cliente(request), "127.0.0.1")
-        with override_settings(TRUSTED_IP_HEADER="HTTP_X_NF_CLIENT_CONNECTION_IP"):
-            self.assertEqual(ip_cliente(request), "203.0.113.9")
-            request.META["HTTP_X_NF_CLIENT_CONNECTION_IP"] = "IP falsa"
-            self.assertEqual(ip_cliente(request), "127.0.0.1")
+        self.assertEqual(ip_cliente(request), "127.0.0.1")
+        request.ip_real = "203.0.113.9"
+        self.assertEqual(ip_cliente(request), "203.0.113.9")
+        request.ip_real = None
+        self.assertEqual(ip_cliente(request), "127.0.0.1")
 
     def test_throttle_refresh_por_ip(self):
         for _ in range(30):

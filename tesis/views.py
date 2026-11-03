@@ -2,7 +2,6 @@ import ipaddress
 from pathlib import Path
 from rest_framework.permissions import IsAuthenticated
 from django.db import transaction
-from django.conf import settings
 from django.db.models import Q
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
@@ -26,14 +25,9 @@ from notificaciones.servicios import avisar_autores, avisar_revisores
 
 
 def ip_cliente(request):
-    # Solo confiar en una cabecera cuando el proxy de entrada esté controlado.
-    if settings.TRUSTED_IP_HEADER:
-        try:
-            return str(
-                ipaddress.ip_address(request.META.get(settings.TRUSTED_IP_HEADER, ""))
-            )
-        except ValueError:
-            pass
+    # ip_real solo la establece ProxyNetlifyMiddleware después de verificar la firma.
+    if getattr(request, "ip_real", None):
+        return request.ip_real
     try:
         return str(ipaddress.ip_address(request.META.get("REMOTE_ADDR", "")))
     except ValueError:

@@ -24,6 +24,7 @@ INSTALLED_APPS = [
     "tesis",
 ]
 MIDDLEWARE = [
+    "config.middleware.ProxyNetlifyMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -113,6 +114,7 @@ REST_FRAMEWORK = {
         "codigo": "10/min",
         "refresh": "30/min",
         "ticket": "20/min",
+        "salud": "30/min",
     },
 }
 SIMPLE_JWT = {
@@ -142,7 +144,10 @@ REFRESH_COOKIE_NAME = config("REFRESH_COOKIE_NAME", default="tesiteca_refresh")
 EMAIL_TIMEOUT = config("EMAIL_TIMEOUT", default=10, cast=int)
 NOTIFICAR_POR_CORREO = config("NOTIFICAR_POR_CORREO", default=False, cast=bool)
 NOTIFICACIONES_WS = config("NOTIFICACIONES_WS", default=False, cast=bool)
-TRUSTED_IP_HEADER = config("TRUSTED_IP_HEADER", default="")
+NETLIFY_PROXY_SECRET = config("NETLIFY_PROXY_SECRET", default="")
+NETLIFY_SITE_URL = config("NETLIFY_SITE_URL", default="")
+EXIGIR_PROXY_NETLIFY = config("EXIGIR_PROXY_NETLIFY", default=False, cast=bool)
+APP_VERSION = config("APP_VERSION", default="dev")
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = "DENY"
 SECURE_REFERRER_POLICY = "same-origin"

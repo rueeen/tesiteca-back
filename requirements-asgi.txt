@@ -1,0 +1,4 @@
+-r requirements.txt
+# Opcional: WebSockets en un plan que permita una app ASGI y Redis.
+uvicorn[standard]==0.54.0
+channels-redis==4.3.0

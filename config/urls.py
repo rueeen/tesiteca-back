@@ -1,5 +1,6 @@
 from django.contrib import admin
 from django.urls import path, include
+from .views import Salud
 from rest_framework.routers import DefaultRouter
 from usuarios.views import (
     SolicitarCodigo,
@@ -19,6 +20,7 @@ router.register("tesis", TesisViewSet, basename="tesis")
 router.register("materiales", MaterialViewSet, basename="materiales")
 router.register("admin/autorizados", AutorizadosViewSet, basename="autorizados")
 urlpatterns = [
+    path("api/salud/", Salud.as_view()),
     path("admin/", admin.site.urls),
     path("api/auth/solicitar-codigo/", SolicitarCodigo.as_view()),
     path("api/auth/verificar-codigo/", VerificarCodigo.as_view()),

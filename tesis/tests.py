@@ -1178,3 +1178,18 @@ class BackendTests(APITestCase):
         self.assertTrue(
             BlacklistedToken.objects.filter(token__jti=token["jti"]).exists()
         )
+
+    def test_pdf_preserva_cache_control_y_varia_por_sesion(self):
+        tesis = self.tesis()
+        self.login(self.alumno)
+        r = self.client.get(f"/api/tesis/{tesis.pk}/pdf/")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r["Cache-Control"], "no-store")
+        self.assertEqual(r["Content-Type"], "application/pdf")
+        self.assertEqual(r["X-Content-Type-Options"], "nosniff")
+        self.assertTrue(
+            {"authorization", "cookie"}.issubset(
+                {v.strip().lower() for v in r["Vary"].split(",")}
+            )
+        )
+        r.close()
