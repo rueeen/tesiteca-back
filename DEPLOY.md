@@ -1,6 +1,6 @@
 # Deploy en PythonAnywhere · cuenta gratuita de rvavalencia
 
-API: **https://rvavalencia.pythonanywhere.com**. Frontend: **https://tesiteca-inacap.netlify.app**. Proyecto: `/home/rvavalencia/tesiteca-back`.
+API: **https://rvavalencia.pythonanywhere.com**. Frontend: **https://tesiteca.netlify.app**. Proyecto: `/home/rvavalencia/tesiteca-back`.
 
 Esta instalación usa **una web app WSGI con un worker**, sin WebSockets ni Redis. Mantener `NOTIFICACIONES_WS=False`: las notificaciones están en SQLite y llegan al frontend por polling. La cuenta tiene **512 MiB de disco en total**, salida a internet restringida y solo permite SMTP de Gmail. No dispone de tareas programadas en las cuentas gratuitas nuevas; renovar y mantener la app manualmente cada mes.
 
@@ -74,15 +74,17 @@ Activar **Force HTTPS** y pulsar **Reload**. La configuración también habilita
 
 ## 3. Proxy firmado y verificación
 
+Si cambias el nombre del sitio en Netlify, actualiza `FRONTEND_URL`, `NETLIFY_SITE_URL`, `CSRF_TRUSTED_ORIGINS` y `WS_ALLOWED_ORIGINS` en `.env` y presiona **Reload**; si no, el proxy responde 403.
+
 Configurar en Netlify el proxy de `/api/*` hacia `https://rvavalencia.pythonanywhere.com/api/*`, **con firma de proxy** usando la variable `TESITECA_PROXY_SECRET` (consultar la configuración y README del frontend). No enviar ese secreto al bundle público del navegador. El valor debe coincidir con `NETLIFY_PROXY_SECRET` del backend.
 
-Netlify agrega `x-nf-sign`, un JWS HS256 con emisor `netlify`, expiración obligatoria, `site_url=https://tesiteca-inacap.netlify.app` y `deploy_context=production`. El backend admite 30 segundos de desfase. Solo después de validar la firma confía en `x-nf-client-connection-ip`. Sin firma válida usa `REMOTE_ADDR` y, al exigir proxy, bloquea la API excepto salud. No registrar `x-nf-sign` ni el secreto. **TRUSTED_IP_HEADER fue eliminado**; no habilitar confianza directa en cabeceras de IP.
+Netlify agrega `x-nf-sign`, un JWS HS256 con emisor `netlify`, expiración obligatoria, `site_url=https://tesiteca.netlify.app` y `deploy_context=production`. El backend admite 30 segundos de desfase. Solo después de validar la firma confía en `x-nf-client-connection-ip`. Sin firma válida usa `REMOTE_ADDR` y, al exigir proxy, bloquea la API excepto salud. No registrar `x-nf-sign` ni el secreto. **TRUSTED_IP_HEADER fue eliminado**; no habilitar confianza directa en cabeceras de IP.
 
 Comprobar desde el navegador:
 
 1. `https://rvavalencia.pythonanywhere.com/api/salud/` → `estado: ok`, `debug: false`, `via_proxy: false`, `notificaciones_ws: false`, `correo: smtp`, `base_datos: ok`. `version` muestra el hash corto Git o `APP_VERSION` si no hay Git (por defecto `dev`). Salud es público y limitado a 30/min; no muestra secretos.
 2. `https://rvavalencia.pythonanywhere.com/api/tesis/` directo → **403**, `Acceso solo a través del sitio oficial`. Esa es la señal de que el bloqueo funciona.
-3. `https://tesiteca-inacap.netlify.app/api/salud/` → `via_proxy: true` y la misma versión del backend. Si aparece false, corregir el firmado antes de abrir el sistema.
+3. `https://tesiteca.netlify.app/api/salud/` → `via_proxy: true` y la misma versión del backend. Si aparece false, corregir el firmado antes de abrir el sistema.
 4. Login desde el frontend: código recibido, cookie httpOnly/Strict, renovación y cierre de sesión. Refresh sin cookie devuelve 204; cookie inválida devuelve 401. Admin permanece accesible directamente en `https://rvavalencia.pythonanywhere.com/admin/` y CSRF permite ambos dominios.
 5. Comprobar que las respuestas API llevan `Cache-Control: no-store, private` y `Vary` incluye Authorization y Cookie. El PDF conserva `Cache-Control: no-store`. No configurar reglas de Netlify que reemplacen esas cabeceras con caché pública.
 
@@ -140,3 +142,5 @@ Logs: pestaña **Web → Error log / Server log**. No copiar secretos ni firmas 
 Para desarrollo: `pip install -r requirements-dev.txt && python manage.py test`. En un futuro plan con dos apps WSGI/ASGI, instalar la variante ASGI y compartir base de datos y Redis. `InMemoryChannelLayer` no comunica procesos separados. Las cuentas gratuitas de esta guía solo usan polling y mantenimiento mensual manual.
 
 Validación local de esta preparación (Linux, Python 3.12, virtualenv nuevo, solo `requirements.txt`): **site-packages 113,71 MB / 108,45 MiB ocupados en disco** (`du -sk`: 111048 KiB), inferior a 135 MB. La suma de tamaños de archivos es 83,80 MB / 79,92 MiB; la diferencia corresponde a la asignación de bloques del sistema de archivos. El tamaño puede variar con la plataforma y las dependencias transitivas. La suite completa se ejecutó desde otro virtualenv limpio con `requirements-dev.txt`.
+
+En producción la API solo ofrece JSON. Usar `Accept: application/json` o `*/*`; una petición que acepte exclusivamente `text/html` recibe 406 en JSON, nunca la interfaz navegable de DRF. Con `DEBUG=True` la API navegable permanece habilitada para desarrollo.

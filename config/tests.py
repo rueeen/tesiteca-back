@@ -18,7 +18,7 @@ from notificaciones.models import TicketWS, Notificacion
 from tesis.views import ip_cliente
 from .middleware import ProxyNetlifyMiddleware
 
-SITIO = "https://tesiteca-inacap.netlify.app"
+SITIO = "https://otro-sitio.netlify.app"
 CLAVE_PROXY = "secreto-de-prueba-para-firmas-netlify-" * 2
 
 
@@ -306,6 +306,7 @@ class ComandosDeployTests(APITestCase):
             salida = StringIO()
             with override_settings(
                 DEBUG=False,
+                FRONTEND_URL=SITIO,
                 SECRET_KEY="clave-segura-de-prueba-" * 4,
                 ALLOWED_HOSTS=["rvavalencia.pythonanywhere.com"],
                 CSRF_TRUSTED_ORIGINS=[SITIO, "https://rvavalencia.pythonanywhere.com"],
@@ -327,12 +328,85 @@ class ComandosDeployTests(APITestCase):
                 for cambios in [
                     {"PRIVATE_MEDIA_ROOT": static / "admin"},
                     {"NETLIFY_PROXY_SECRET": ""},
+                    {"FRONTEND_URL": "http://otro-sitio.netlify.app"},
+                    {"ALLOWED_HOSTS": []},
+                    {"ALLOWED_HOSTS": ["backend-incorrecto.test"]},
+                    {"CSRF_TRUSTED_ORIGINS": [SITIO]},
                 ]:
                     with override_settings(**cambios), self.assertRaises(CommandError):
                         call_command("verificar_deploy", stdout=StringIO())
+                distinto = "https://sitio-equivocado.netlify.app"
+                mensaje = StringIO()
+                with (
+                    override_settings(NETLIFY_SITE_URL=distinto),
+                    self.assertRaises(CommandError),
+                ):
+                    call_command("verificar_deploy", stdout=mensaje)
+                self.assertIn(distinto, mensaje.getvalue())
+                self.assertIn(SITIO, mensaje.getvalue())
+                with override_settings(
+                    ALLOWED_HOSTS=["backend-prueba.test"],
+                    CSRF_TRUSTED_ORIGINS=[SITIO, "https://backend-prueba.test"],
+                ):
+                    call_command("verificar_deploy", stdout=StringIO())
                 with patch(
                     "usuarios.management.commands.verificar_deploy.MigrationExecutor"
                 ) as ejecutor:
                     ejecutor.return_value.migration_plan.return_value = ["pendiente"]
                     with self.assertRaises(CommandError):
                         call_command("verificar_deploy", stdout=StringIO())
+
+
+class RenderersTests(APITestCase):
+    def test_renderers_de_produccion_y_desarrollo(self):
+        # Arrancar Django en procesos independientes para probar la configuración
+        # real de DEBUG antes de que DRF cargue sus clases por defecto.
+        import json
+        import os
+        import subprocess
+        import sys
+
+        codigo = """
+import json
+import django
+django.setup()
+from django.conf import settings
+from django.db import connection
+from django.test import Client
+from rest_framework.views import APIView
+connection.settings_dict['NAME'] = ':memory:'
+cliente = Client()
+html = cliente.get('/api/salud/', HTTP_ACCEPT='text/html')
+api = cliente.get('/api/salud/', HTTP_ACCEPT='application/json')
+print(json.dumps({'html_status': html.status_code, 'html_content_type': html['Content-Type'], 'api_status': api.status_code, 'api_estado': api.json()['estado'], 'renderers': [r.__name__ for r in APIView.renderer_classes], 'html_es_json': html['Content-Type'].startswith('application/json')}))
+"""
+        for debug in ["False", "True"]:
+            with self.subTest(DEBUG=debug):
+                entorno = {
+                    **os.environ,
+                    "DJANGO_SETTINGS_MODULE": "config.settings",
+                    "DEBUG": debug,
+                    "ALLOWED_HOSTS": "testserver",
+                    "SECURE_SSL_REDIRECT": "False",
+                    "EXIGIR_PROXY_NETLIFY": "False",
+                }
+                resultado = subprocess.run(
+                    [sys.executable, "-c", codigo],
+                    cwd=settings.BASE_DIR,
+                    env=entorno,
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+                self.assertEqual(resultado.returncode, 0, resultado.stderr)
+                datos = json.loads(resultado.stdout)
+                self.assertEqual(datos["api_status"], 200)
+                self.assertEqual(datos["api_estado"], "ok")
+                if debug == "False":
+                    self.assertEqual(datos["renderers"], ["JSONRenderer"])
+                    self.assertEqual(datos["html_status"], 406)
+                    self.assertTrue(datos["html_es_json"])
+                else:
+                    self.assertIn("BrowsableAPIRenderer", datos["renderers"])
+                    self.assertEqual(datos["html_status"], 200)
+                    self.assertTrue(datos["html_content_type"].startswith("text/html"))

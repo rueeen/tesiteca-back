@@ -5,9 +5,6 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
 
-BACKEND = "rvavalencia.pythonanywhere.com"
-FRONTEND = "https://tesiteca-inacap.netlify.app"
-
 
 class Command(BaseCommand):
     help = (
@@ -31,12 +28,16 @@ class Command(BaseCommand):
             and clave.lower()
             not in {"example" * 10, "changeme" * 10, "your-secret-key" * 5},
         )
+        frontend = settings.FRONTEND_URL
+        backend = settings.ALLOWED_HOSTS[0] if settings.ALLOWED_HOSTS else None
+        comprobar("FRONTEND_URL empieza con https://", frontend.startswith("https://"))
+        comprobar("ALLOWED_HOSTS incluye un host de backend", bool(backend))
         comprobar(
-            f"ALLOWED_HOSTS contiene {BACKEND}", BACKEND in settings.ALLOWED_HOSTS
-        )
-        comprobar(
-            "CSRF_TRUSTED_ORIGINS incluye Netlify y PythonAnywhere",
-            {FRONTEND, f"https://{BACKEND}"}.issubset(settings.CSRF_TRUSTED_ORIGINS),
+            "CSRF_TRUSTED_ORIGINS incluye FRONTEND_URL y el primer ALLOWED_HOSTS",
+            bool(backend)
+            and {frontend, f"https://{backend}"}.issubset(
+                settings.CSRF_TRUSTED_ORIGINS
+            ),
         )
         comprobar("SECURE_COOKIES=True", settings.SECURE_COOKIES)
         comprobar(
@@ -50,9 +51,14 @@ class Command(BaseCommand):
             f"NETLIFY_PROXY_SECRET definido (largo: {len(settings.NETLIFY_PROXY_SECRET)})",
             bool(settings.NETLIFY_PROXY_SECRET),
         )
+        coincide = settings.NETLIFY_SITE_URL == frontend
         comprobar(
-            "NETLIFY_SITE_URL coincide con el sitio oficial",
-            settings.NETLIFY_SITE_URL == FRONTEND,
+            (
+                "NETLIFY_SITE_URL coincide con FRONTEND_URL"
+                if coincide
+                else f"NETLIFY_SITE_URL={settings.NETLIFY_SITE_URL!r} no coincide con FRONTEND_URL={frontend!r}"
+            ),
+            coincide,
         )
         comprobar("EXIGIR_PROXY_NETLIFY=True", settings.EXIGIR_PROXY_NETLIFY)
         comprobar(
