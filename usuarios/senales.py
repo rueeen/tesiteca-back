@@ -39,3 +39,14 @@ def sincronizar_activacion(sender, instance, **kwargs):
         and aprobada
     ):
         usuario.cambiar_estado(EstadoCuenta.ACTIVA)
+
+    elif usuario.estado_cuenta == EstadoCuenta.ACTIVA:
+        rol_anterior = usuario.rol
+        for campo in ["rol", "carrera", "area", "sede"]:
+            setattr(usuario, campo, getattr(instance, campo))
+        usuario.save(update_fields=["rol", "carrera", "area", "sede"])
+        SolicitudAcceso.objects.filter(usuario=usuario, estado="APROBADA").update(
+            rol_solicitado=usuario.rol, carrera=usuario.carrera, sede=usuario.sede
+        )
+        if rol_anterior != usuario.rol:
+            revocar_sesiones(usuario)

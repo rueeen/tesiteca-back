@@ -373,7 +373,7 @@ class CuentasTests(APITestCase):
         u = self.registrar()
         self.verificar(u)
         self.client.force_authenticate(self.admin)
-        contenido = f"email,rut,nombre_completo,rol,carrera_codigo,area,sede\n{u.email},,Alumno,ESTUDIANTE,IEI,,aríca\n"
+        contenido = f"email,rut,nombre_completo,carrera_codigo,sede\n{u.email},,Alumno,IEI,aríca\n"
         r = self.client.post(
             "/api/admin/autorizados/importar/",
             {"archivo": SimpleUploadedFile("lista.csv", contenido.encode())},

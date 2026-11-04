@@ -45,6 +45,16 @@ class UsuarioSerializer(serializers.ModelSerializer):
 
 
 class AutorizadoSerializer(serializers.ModelSerializer):
+    estado_cuenta = serializers.CharField(read_only=True, allow_null=True)
+
+    def validate_rut(self, valor):
+        if not valor.strip():
+            return ""
+        try:
+            return normalizar_rut(valor)
+        except ErrorDjango as exc:
+            raise serializers.ValidationError(exc.messages)
+
     class Meta:
         model = UsuarioAutorizado
         fields = [
@@ -57,10 +67,17 @@ class AutorizadoSerializer(serializers.ModelSerializer):
             "area",
             "sede",
             "activo",
+            "estado_cuenta",
         ]
 
     def to_representation(self, instancia):
         datos = super().to_representation(instancia)
+        if not hasattr(instancia, "estado_cuenta"):
+            datos["estado_cuenta"] = (
+                Usuario.objects.filter(email=instancia.email)
+                .values_list("estado_cuenta", flat=True)
+                .first()
+            )
         for campo, serializador in [
             ("carrera", CarreraMiniSerializer),
             ("area", MiniSerializer),
@@ -84,6 +101,29 @@ class AutorizadoSerializer(serializers.ModelSerializer):
         sede = datos.get("sede", getattr(self.instance, "sede", None))
         if rol != Rol.ADMIN and not sede:
             raise serializers.ValidationError({"sede": "La sede es obligatoria"})
+        email = datos.get("email", getattr(self.instance, "email", ""))
+        if (
+            rol in (Rol.COORDINADOR, Rol.DIRECTOR)
+            and (
+                self.instance is None
+                or rol != self.instance.rol
+                or email != self.instance.email
+            )
+            and not email.endswith("@inacap.cl")
+        ):
+            raise serializers.ValidationError(
+                {"email": "Los funcionarios deben usar correo @inacap.cl"}
+            )
+        if rol in (Rol.ESTUDIANTE, Rol.COORDINADOR) and carrera:
+            if "area" in datos and area and area.pk != carrera.area_id:
+                raise serializers.ValidationError(
+                    {"area": "La carrera no corresponde al área"}
+                )
+            datos["area"] = carrera.area
+            area = carrera.area
+        if rol == Rol.DIRECTOR:
+            datos["carrera"] = None
+            carrera = None
         if carrera and area and carrera.area_id != area.id:
             raise serializers.ValidationError("La carrera no corresponde al área")
         return datos
@@ -119,6 +159,18 @@ class RegistroSerializer(CorreoSerializer):
 
     def validate(self, datos):
         dominio = datos["email"].rsplit("@", 1)[1]
+        autorizado = (
+            UsuarioAutorizado.objects.select_related("carrera", "area", "sede")
+            .filter(email=datos["email"], activo=True)
+            .first()
+        )
+        if autorizado:
+            datos.update(
+                rol_solicitado=autorizado.rol,
+                carrera=autorizado.carrera,
+                area=autorizado.area,
+                sede=autorizado.sede,
+            )
         rol = datos.get(
             "rol_solicitado",
             Rol.ESTUDIANTE if dominio == "inacapmail.cl" else Rol.COORDINADOR,
@@ -127,7 +179,11 @@ class RegistroSerializer(CorreoSerializer):
             raise serializers.ValidationError(
                 {"rol_solicitado": "Los estudiantes solo pueden solicitar ESTUDIANTE"}
             )
-        if dominio == "inacap.cl" and rol not in (Rol.COORDINADOR, Rol.DIRECTOR):
+        if (
+            dominio == "inacap.cl"
+            and rol not in (Rol.COORDINADOR, Rol.DIRECTOR)
+            and not (autorizado and rol == Rol.ADMIN)
+        ):
             raise serializers.ValidationError(
                 {"rol_solicitado": "Solicita COORDINADOR o DIRECTOR"}
             )

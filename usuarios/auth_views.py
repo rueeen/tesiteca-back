@@ -79,7 +79,7 @@ class Registro(Publica):
             return Response({"detail": GENERICO_REGISTRO}, status=201)
         rechazada = usuario is not None
         usuario = usuario or Usuario(email=datos["email"])
-        for campo in ["nombre_completo", "rut", "carrera", "sede"]:
+        for campo in ["nombre_completo", "rut", "carrera", "sede", "area"]:
             setattr(usuario, campo, datos.get(campo))
         usuario.rol = datos["rol_solicitado"]
         usuario.estado_cuenta = (

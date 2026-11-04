@@ -100,7 +100,40 @@ Acciones: `/api/tesis/mis-tesis/`, `pendientes/`, `/{id}/aprobar/`, `rechazar/` 
 
 ## Lista blanca y sedes oficiales
 
-`GET /api/admin/autorizados/plantilla/` descarga XLSX; `POST /api/admin/autorizados/importar/` recibe CSV UTF-8/XLSX, campo `archivo`, máximo 5 MB/10000 filas. Columnas `email,rut,nombre_completo,rol,carrera_codigo,area,sede`; `activo` opcional al final. Sede se busca sin distinguir mayúsculas ni tildes. Upsert por email con errores por fila legibles. El alcance es carrera+sede para coordinadores, área+sede para directores, nacional para ADMIN. Desactivar revoca sesiones; reactivar no recupera los refresh revocados.
+### Excel/CSV: solo estudiantes
+
+`GET /api/admin/autorizados/plantilla/` descarga una plantilla XLSX con las hojas **Estudiantes**, **Instrucciones**, **Carreras** y **Sedes**. Primera fila exacta:
+
+```csv
+email,rut,nombre_completo,carrera_codigo,sede
+estudiante@inacapmail.cl,12345678-5,Estudiante Demo,IEI,Arica
+```
+
+`POST /api/admin/autorizados/importar/` recibe CSV UTF-8 o XLSX en `archivo`, máximo 5 MB/10000 filas. El rol siempre es ESTUDIANTE y el área se deriva de la carrera. El correo debe ser `@inacapmail.cl`, carrera y sede son obligatorias, y RUT es opcional pero debe tener dígito verificador válido si se informa. La sede se busca sin distinguir mayúsculas ni tildes. Se hace upsert por email; los errores por fila no detienen las válidas. Se conserva la columna opcional `activo` al final para activar/desactivar, sin cambiar el rol.
+
+Una fila de funcionario se rechaza y un funcionario existente nunca se modifica desde Excel. **Las plantillas antiguas con `rol` o `area` se rechazan por completo con 400**: «La plantilla cambió: descarga la nueva desde el panel». No se convierten ni se adivinan columnas.
+
+El alcance sigue siendo carrera+sede para coordinadores, área+sede para directores y nacional para ADMIN. La lista blanca es preaprobación con `PREAPROBACION_LISTA_BLANCA=True`; siempre se exige validar el correo.
+
+### Formulario de funcionarios
+
+`POST /api/admin/funcionarios/` acepta:
+
+```json
+{"email":"coordinador@inacap.cl","nombre_completo":"Nombre completo","rut":"12345678-5","rol":"COORDINADOR","carrera":1,"sede":1}
+```
+
+Correo obligatorio `@inacap.cl`. RUT opcional y validado. COORDINADOR requiere carrera, de la cual se deriva el área. DIRECTOR requiere `area` y no tiene carrera. ADMIN no se crea aquí: usar `crear_admin`.
+
+ADMIN puede registrar funcionarios de cualquier sede. DIRECTOR solo puede registrar o modificar coordinadores de carreras de su área en su sede; no puede reasignar un funcionario que ya pertenece a otro ámbito. COORDINADOR recibe 403.
+
+Respuesta 201: `{autorizado, cuenta: {existe:true, estado_cuenta} | null, siguiente_paso}`. **El alta no envía correo.** Si existe cuenta, registra la aprobación y actualiza el rol/carrera/área/sede; con correo validado queda ACTIVA, sin él permanece PENDIENTE_VERIFICACION. Si cambia el rol de una cuenta activa, se revocan sus refresh. Si no existe cuenta, el funcionario entra a Solicitar acceso, crea su contraseña y valida el correo. Los datos activos de la lista blanca tienen prioridad sobre rol, carrera, área y sede elegidos en el formulario de registro. Con la preaprobación deshabilitada se conserva la revisión por el panel para nuevas cuentas.
+
+### Listado y edición de autorizados
+
+`GET /api/admin/autorizados/?tipo=estudiantes|funcionarios` filtra los registros; cada item añade `estado_cuenta` (null si no hay cuenta). Se conservan búsqueda y filtros por rol, carrera y activo. Los funcionarios de este filtro son coordinadores y directores.
+
+`PATCH /api/admin/autorizados/{id}/`: solo ADMIN cambia rol y datos personales. El resto solo activa/desactiva en su ámbito; DIRECTOR también puede cambiar la carrera de un coordinador a otra de su área, manteniendo sede. Para pasar de ESTUDIANTE a un rol de funcionario el correo debe ser `@inacap.cl`. Desactivar revoca sesiones; reactivar no recupera refresh revocados. Los cambios de metadata se reflejan en las cuentas existentes y sus aprobaciones.
 
 No hay una lista fija de sedes en código. Solo Arica se crea por seed. Cargar la lista oficial desde CSV o `/api/admin/sedes/`:
 
