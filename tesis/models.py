@@ -10,18 +10,16 @@ class Estado(models.TextChoices):
     RECHAZADA = "RECHAZADA", "Rechazada"
 
 
+class TipoTrabajo(models.TextChoices):
+    PROYECTO_TITULO = "PROYECTO_TITULO", "Proyecto de título"
+    PROYECTO_INTEGRADO = "PROYECTO_INTEGRADO", "Proyecto integrado"
+
+
 class Tesis(models.Model):
     titulo = models.CharField(max_length=300)
     resumen = models.TextField()
     palabras_clave = models.CharField(max_length=500, blank=True)
-    tipo = models.CharField(
-        max_length=30,
-        choices=[
-            ("TESIS", "Tesis"),
-            ("PROYECTO_TITULO", "Proyecto de título"),
-            ("INFORME_PRACTICA", "Informe de práctica"),
-        ],
-    )
+    tipo = models.CharField(max_length=30, choices=TipoTrabajo.choices)
     anio = models.PositiveIntegerField()
     periodo = models.PositiveSmallIntegerField(
         choices=[(1, "1"), (2, "2")], null=True, blank=True

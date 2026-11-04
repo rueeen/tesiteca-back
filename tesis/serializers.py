@@ -14,7 +14,7 @@ from academico.serializers import (
     tipo_mini,
 )
 from .palabras_clave import PalabrasClaveField, palabras_clave_lista
-from .models import Tesis, AutorTesis, MaterialAdicional, Estado
+from .models import Tesis, AutorTesis, MaterialAdicional, Estado, TipoTrabajo
 from .permisos import material_visible, edita, revisa, puede_reenviar
 from .servicios import guardar_tesis
 from .texto import normalizar_resumen, resumen_breve
@@ -251,6 +251,13 @@ class AutoresJSON(serializers.Field):
 
 
 class TesisEscrituraSerializer(serializers.ModelSerializer):
+    tipo = serializers.ChoiceField(
+        choices=TipoTrabajo.choices,
+        error_messages={
+            "invalid_choice": "Tipo de trabajo inválido. Usa PROYECTO_TITULO o PROYECTO_INTEGRADO."
+        },
+    )
+
     def validate_resumen(self, valor):
         return normalizar_resumen(valor)
 

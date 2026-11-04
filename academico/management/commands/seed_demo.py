@@ -7,7 +7,7 @@ from reportlab.pdfgen import canvas
 from academico.models import Sede, Area, Carrera
 from usuarios.models import Usuario, UsuarioAutorizado, Rol
 from usuarios.serializers import CorreoSerializer
-from tesis.models import Tesis, Estado
+from tesis.models import Tesis, Estado, TipoTrabajo
 from tesis.servicios import guardar_tesis
 
 
@@ -129,7 +129,15 @@ class Command(BaseCommand):
 
         for i in range(15):
             titulo = f"Demo {i+1:02d}: Biblioteca tecnológica de Arica"
-            if Tesis.objects.filter(titulo=titulo).exists():
+            tipo = (
+                TipoTrabajo.PROYECTO_INTEGRADO
+                if i % 2 == 0
+                else TipoTrabajo.PROYECTO_TITULO
+            )
+            existente = Tesis.objects.filter(titulo=titulo).first()
+            if existente:
+                if existente.tipo != tipo:
+                    Tesis.objects.filter(pk=existente.pk).update(tipo=tipo)
                 continue
             carrera = carreras[i % 2]
             estudiantes = personas[:2] if carrera == iei else [personas[2]]
@@ -159,7 +167,7 @@ class Command(BaseCommand):
                     "software,datos",
                     "web,educación",
                 ][i % 3],
-                "tipo": "PROYECTO_TITULO",
+                "tipo": tipo,
                 "anio": 2021 + i % 6,
                 "periodo": 1 + i % 2,
                 "carrera": carrera,

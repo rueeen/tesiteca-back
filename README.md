@@ -75,7 +75,8 @@ Las solicitudes pendientes pueden aprobarse antes de validar el correo: permanec
 - `GET /api/catalogos/regiones/`: 16 regiones de norte a sur, IDs romanos; Metropolitana usa `RM` (el CSV también acepta `XIII`).
 - `GET /api/catalogos/niveles/`: TECNICO («Técnico de Nivel Superior»), PROFESIONAL («Profesional»), INGENIERIA («Ingeniería»).
 - `GET /api/catalogos/carreras/`: activas, CarreraMini más `extensiones_material`.
-- `GET /api/catalogos/areas/`, `tipos/`, `anios/`, `profesores-guia/`: catálogos autenticados. Tipos `{id,nombre}`; profesores son strings.
+- `GET /api/catalogos/areas/`, `tipos/`, `anios/`, `profesores-guia/`: catálogos autenticados. Profesores son strings.
+- `GET /api/catalogos/tipos/` devuelve exactamente, en este orden: `[{"id":"PROYECTO_TITULO","nombre":"Proyecto de título"},{"id":"PROYECTO_INTEGRADO","nombre":"Proyecto integrado"}]`. Son los únicos códigos aceptados en POST/PATCH y en el filtro `tipo`; valores distintos devuelven 400 en español. La migración convierte los códigos antiguos a `PROYECTO_TITULO` sin modificar los demás datos.
 - `GET/POST /api/admin/sedes/`, `PATCH /api/admin/sedes/{id}/`: solo ADMIN; `nombre,ciudad,region,orden,activa`.
 
 La carrera tiene duración de 2–10 semestres, editable en Django admin. El seed configura IEI como INGENIERIA/8 y AP como TECNICO/4; **confirmar duración de AP con la malla vigente**.
@@ -164,7 +165,7 @@ python manage.py seed_demo --con-ejemplos
 
 Pruebas con correo en memoria, PDFs temporales y una base anterior migrada en un proceso aislado. Se mantienen casos de JWT, importación, watermark, privacidad, proxy, revisión y notificaciones, adaptando el login retirado a contraseña.
 
-Demo: demo1/demo2 estudiantes IEI; demo3 estudiante AP; demo4 coordinador AP; demo5 coordinador IEI; demo6 director del área; todos en `@inacapmail.cl` como fixtures ficticios heredados. Sus cuentas existentes ya validadas usan recuperación para establecer contraseña; los nuevos ejemplos quedan preaprobados y deben reenviar/validar el enlace antes de recuperar la contraseña. Solo las cuentas reales nuevas respetan la regla de dominio del registro. 15 tesis: 11 publicadas, 3 en revisión, 1 rechazada. `--reset-ejemplos` reemplaza las tesis «Demo » y sus PDFs; no usar en producción sin revisar los datos que se van a eliminar.
+Demo: demo1/demo2 estudiantes IEI; demo3 estudiante AP; demo4 coordinador AP; demo5 coordinador IEI; demo6 director del área; todos en `@inacapmail.cl` como fixtures ficticios heredados. Sus cuentas existentes ya validadas usan recuperación para establecer contraseña; los nuevos ejemplos quedan preaprobados y deben reenviar/validar el enlace antes de recuperar la contraseña. Solo las cuentas reales nuevas respetan la regla de dominio del registro. 15 tesis: 11 publicadas, 3 en revisión, 1 rechazada. Los ejemplos alternan Proyecto integrado (impares) y Proyecto de título (pares); el seed también actualiza ese campo en los ejemplos existentes sin regenerar sus PDFs. `--reset-ejemplos` reemplaza las tesis «Demo » y sus PDFs; no usar en producción sin revisar los datos que se van a eliminar.
 
 ## Regla de cuenta y actualización de marcas
 
