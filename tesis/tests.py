@@ -18,7 +18,7 @@ from reportlab.pdfgen import canvas
 from rest_framework.test import APITestCase
 from academico.models import Area, Carrera, Sede
 from usuarios.models import Usuario, UsuarioAutorizado, Rol, IntentoLogin, EstadoCuenta
-from .models import Tesis, Estado, MaterialAdicional, RegistroAcceso
+from .models import Tesis, Estado, MaterialAdicional, RegistroAcceso, TipoTrabajo
 from .servicios import guardar_tesis
 from .marca_agua import aplicar_marca_lector
 from .serializers import MaterialSerializer
@@ -132,7 +132,7 @@ class BackendTests(APITestCase):
                 "titulo": titulo,
                 "resumen": "Resumen",
                 "palabras_clave": "redes,software",
-                "tipo": "TESIS",
+                "tipo": TipoTrabajo.PROYECTO_TITULO,
                 "anio": 2025,
                 "carrera": carrera or self.ap,
                 "sede": self.sede,
@@ -412,7 +412,7 @@ class BackendTests(APITestCase):
         datos = {
             "titulo": "Subida",
             "resumen": "Texto",
-            "tipo": "TESIS",
+            "tipo": TipoTrabajo.PROYECTO_TITULO,
             "anio": 2026,
             "carrera": self.ap.pk,
             "sede": self.sede.pk,
@@ -595,9 +595,8 @@ class BackendTests(APITestCase):
         self.assertEqual(
             r.data,
             [
-                {"id": "TESIS", "nombre": "Tesis"},
                 {"id": "PROYECTO_TITULO", "nombre": "Proyecto de título"},
-                {"id": "INFORME_PRACTICA", "nombre": "Informe de práctica"},
+                {"id": "PROYECTO_INTEGRADO", "nombre": "Proyecto integrado"},
             ],
         )
         self.client.force_authenticate(None)
@@ -679,7 +678,7 @@ class BackendTests(APITestCase):
         return {
             "titulo": texto,
             "resumen": "Resumen",
-            "tipo": "TESIS",
+            "tipo": TipoTrabajo.PROYECTO_TITULO,
             "anio": 2026,
             "carrera": self.ap.pk,
             "profesor_guia": "Guía",
@@ -919,6 +918,10 @@ class BackendTests(APITestCase):
         sembrar()
         ejemplos = Tesis.objects.filter(titulo__startswith="Demo ")
         self.assertEqual(ejemplos.count(), 15)
+        self.assertEqual(
+            ejemplos.filter(tipo=TipoTrabajo.PROYECTO_INTEGRADO).count(), 8
+        )
+        self.assertEqual(ejemplos.filter(tipo=TipoTrabajo.PROYECTO_TITULO).count(), 7)
         self.assertEqual(ejemplos.filter(estado=Estado.PUBLICADA).count(), 11)
         self.assertEqual(ejemplos.filter(estado=Estado.EN_REVISION).count(), 3)
         self.assertEqual(ejemplos.filter(estado=Estado.RECHAZADA).count(), 1)
@@ -951,8 +954,17 @@ class BackendTests(APITestCase):
         self.assertTrue(
             all(t["carrera"]["codigo"] == "IEI" for t in pendientes["results"])
         )
+        impar = ejemplos.get(titulo="Demo 01: Biblioteca tecnológica de Arica")
+        ruta_original = impar.pdf_original.name
+        Tesis.objects.filter(pk=impar.pk).update(tipo=TipoTrabajo.PROYECTO_TITULO)
         sembrar()
         self.assertEqual(ejemplos.count(), 15)
+        impar.refresh_from_db()
+        self.assertEqual(impar.tipo, TipoTrabajo.PROYECTO_INTEGRADO)
+        self.assertEqual(impar.pdf_original.name, ruta_original)
+        self.assertEqual(
+            ejemplos.filter(tipo=TipoTrabajo.PROYECTO_INTEGRADO).count(), 8
+        )
         anterior = set(ejemplos.values_list("pdf_original", flat=True)) | set(
             ejemplos.values_list("pdf_marcado", flat=True)
         )
@@ -1419,3 +1431,54 @@ class BackendTests(APITestCase):
                 with self.captureOnCommitCallbacks(execute=True):
                     call_command("regenerar_marcas", stdout=salida, stderr=errores)
         self.assertIn("Regeneradas: 1; errores: 1; total: 2", salida.getvalue())
+
+    def test_rechaza_tipos_retirados_y_desconocidos_en_post_y_patch(self):
+        import importlib
+
+        anterior = importlib.import_module("tesis.migrations.0004_alter_tesis_tipo")
+        retirados = [
+            codigo
+            for codigo, _ in anterior.Migration.operations[0].field.choices
+            if codigo not in TipoTrabajo.values
+        ]
+        self.assertEqual(len(retirados), 2)
+        self.login(self.admin)
+        tesis = self.tesis(titulo="Tipo válido")
+        for tipo in retirados + ["OTRO_INVALIDO"]:
+            with self.subTest(tipo=tipo):
+                datos = self.datos_subida("Subida inválida")
+                datos["tipo"] = tipo
+                post = self.client.post("/api/tesis/", datos, format="multipart")
+                patch = self.client.patch(f"/api/tesis/{tesis.pk}/", {"tipo": tipo})
+                for respuesta in [post, patch]:
+                    self.assertEqual(respuesta.status_code, 400, respuesta.data)
+                    self.assertIn(
+                        "Tipo de trabajo inválido", str(respuesta.data["tipo"])
+                    )
+        tesis.refresh_from_db()
+        self.assertEqual(tesis.tipo, TipoTrabajo.PROYECTO_TITULO)
+        self.assertEqual(Tesis.objects.count(), 1)
+
+    def test_filtro_proyecto_integrado_y_detalle(self):
+        titulo = self.tesis(titulo="Proyecto de título")
+        integrado = self.tesis(titulo="Proyecto integrado")
+        integrado.tipo = TipoTrabajo.PROYECTO_INTEGRADO
+        integrado.save(update_fields=["tipo"])
+        self.login(self.alumno)
+        r = self.client.get("/api/tesis/", {"tipo": TipoTrabajo.PROYECTO_INTEGRADO})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual([item["id"] for item in r.data["results"]], [integrado.pk])
+        self.assertEqual(
+            r.data["results"][0]["tipo"],
+            {"id": "PROYECTO_INTEGRADO", "nombre": "Proyecto integrado"},
+        )
+        self.assertEqual(
+            self.client.get(f"/api/tesis/{integrado.pk}/").data["tipo"],
+            r.data["results"][0]["tipo"],
+        )
+        self.login(self.admin)
+        cambio = self.client.patch(
+            f"/api/tesis/{titulo.pk}/", {"tipo": TipoTrabajo.PROYECTO_INTEGRADO}
+        )
+        self.assertEqual(cambio.status_code, 200, cambio.data)
+        self.assertEqual(cambio.data["tipo"]["id"], TipoTrabajo.PROYECTO_INTEGRADO)

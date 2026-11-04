@@ -149,3 +149,56 @@ assert not SolicitudAcceso.objects.filter(usuario_id=p.pk).exists()
                 timeout=60,
             )
         self.assertEqual(resultado.returncode, 0, resultado.stderr)
+
+    def test_migracion_tipos_trabajo_conserva_datos_y_reversa_esquema(self):
+        codigo = """
+import os
+import django
+django.setup()
+from django.db import connection
+from django.db.migrations.executor import MigrationExecutor
+connection.settings_dict['NAME']=os.environ['PRUEBA_MIGRACION_DB']
+ejecutor=MigrationExecutor(connection)
+previas=[('tesis','0006_renormalizar_resumen'),('usuarios','0004_alter_solicitudacceso_sede_and_more'),('academico','0002_alter_sede_options_carrera_duracion_semestres_and_more')]
+ejecutor.migrate(previas)
+apps=ejecutor.loader.project_state(previas).apps
+sede=apps.get_model('academico','Sede').objects.create(nombre='Arica',ciudad='Arica')
+area=apps.get_model('academico','Area').objects.create(nombre='Informática')
+carrera=apps.get_model('academico','Carrera').objects.create(nombre='Ingeniería',codigo='IEI',area=area)
+u=apps.get_model('usuarios','Usuario').objects.create(email='migracion-tipos@inacap.cl',nombre_completo='Autor',rol='ADMIN')
+Tesis=apps.get_model('tesis','Tesis')
+ids=[]
+for i,tipo in enumerate(['TESIS','INFORME_PRACTICA','PROYECTO_TITULO']):
+    tesis=Tesis.objects.create(titulo=f'Trabajo anterior {i}',resumen='Resumen conservado',tipo=tipo,anio=2026,periodo=2,carrera=carrera,sede=sede,subido_por=u,profesor_guia='Guía',pdf_original=f'IEI/{i}.pdf',pdf_marcado=f'IEI/{i}-marca.pdf',hash_sha256=f'{i:064x}')
+    ids.append(tesis.pk)
+ejecutor=MigrationExecutor(connection)
+ejecutor.migrate(ejecutor.loader.graph.leaf_nodes())
+from tesis.models import Tesis as Actual, TipoTrabajo
+assert Actual.objects.count()==3
+assert set(Actual.objects.values_list('tipo',flat=True))=={TipoTrabajo.PROYECTO_TITULO}
+for i,pk in enumerate(ids):
+    tesis=Actual.objects.get(pk=pk)
+    assert tesis.pdf_original.name==f'IEI/{i}.pdf' and tesis.periodo==2 and tesis.resumen=='Resumen conservado'
+# Solo se revierte el esquema; la normalización de datos no inventa el tipo anterior.
+ejecutor=MigrationExecutor(connection)
+ejecutor.migrate([('tesis','0006_renormalizar_resumen')])
+apps=ejecutor.loader.project_state([('tesis','0006_renormalizar_resumen')]).apps
+Anterior=apps.get_model('tesis','Tesis')
+assert ('TESIS','Tesis') in Anterior._meta.get_field('tipo').choices
+assert set(Anterior.objects.values_list('tipo',flat=True))=={'PROYECTO_TITULO'}
+"""
+        with tempfile.TemporaryDirectory() as carpeta:
+            entorno = {
+                **os.environ,
+                "DJANGO_SETTINGS_MODULE": "config.settings",
+                "PRUEBA_MIGRACION_DB": str(Path(carpeta) / "tipos.sqlite3"),
+            }
+            resultado = subprocess.run(
+                [sys.executable, "-c", codigo],
+                cwd=settings.BASE_DIR,
+                env=entorno,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        self.assertEqual(resultado.returncode, 0, resultado.stderr)
