@@ -107,9 +107,12 @@ class SolicitudesViewSet(viewsets.GenericViewSet):
             )
         if datos["rol"] in (Rol.ESTUDIANTE, Rol.COORDINADOR) and not datos["carrera"]:
             raise ValidationError({"carrera": "La carrera es obligatoria"})
+        if datos["rol"] == Rol.DIRECTOR and not datos["carrera"]:
+            datos["area"] = solicitud.usuario.area
         if (
             datos["rol"] == Rol.DIRECTOR
             and not datos["carrera"]
+            and not datos.get("area")
             and Area.objects.filter(activa=True).count() != 1
         ):
             raise ValidationError(

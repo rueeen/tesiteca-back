@@ -197,6 +197,7 @@ class SeguridadTests(APITestCase):
                         email=self.usuario.email,
                         nombre_completo="Alumno",
                         carrera=self.usuario.carrera,
+                        sede=self.sede,
                     )
 
     def test_probar_correo_y_error_sin_password(self):

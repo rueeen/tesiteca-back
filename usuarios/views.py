@@ -8,6 +8,7 @@ from rest_framework.permissions import BasePermission
 from .cookies import poner_refresh, borrar_refresh
 from django.db import transaction
 from django.http import HttpResponse
+from django.db.models import OuterRef, Subquery
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -44,7 +45,7 @@ class MiUsuario(APIView):
         return Response(UsuarioSerializer(request.user).data)
 
 
-COLUMNAS = ["email", "rut", "nombre_completo", "rol", "carrera_codigo", "area", "sede"]
+COLUMNAS = ["email", "rut", "nombre_completo", "carrera_codigo", "sede"]
 
 
 class AutorizadosViewSet(viewsets.ModelViewSet):
@@ -56,9 +57,24 @@ class AutorizadosViewSet(viewsets.ModelViewSet):
     ordering = ["email"]
 
     def get_queryset(self):
-        qs = UsuarioAutorizado.objects.select_related(
-            "carrera__area", "area", "sede"
-        ).order_by("email")
+        qs = (
+            UsuarioAutorizado.objects.select_related("carrera__area", "area", "sede")
+            .annotate(
+                estado_cuenta=Subquery(
+                    Usuario.objects.filter(email=OuterRef("email")).values(
+                        "estado_cuenta"
+                    )[:1]
+                )
+            )
+            .order_by("email")
+        )
+        tipo = self.request.query_params.get("tipo")
+        if tipo == "estudiantes":
+            qs = qs.filter(rol=Rol.ESTUDIANTE)
+        elif tipo == "funcionarios":
+            qs = qs.filter(rol__in=[Rol.COORDINADOR, Rol.DIRECTOR])
+        elif tipo is not None:
+            raise ValidationError({"tipo": "Usa estudiantes o funcionarios"})
         u = self.request.user
         if u.rol == Rol.ADMIN:
             return qs
@@ -77,6 +93,18 @@ class AutorizadosViewSet(viewsets.ModelViewSet):
             raise PermissionDenied()
         serializer.save()
 
+    def partial_update(self, request, *args, **kwargs):
+        instancia = self.get_object()
+        if request.user.rol != Rol.ADMIN:
+            permitidos = {"activo"}
+            if request.user.rol == Rol.DIRECTOR and instancia.rol == Rol.COORDINADOR:
+                permitidos.add("carrera")
+            if set(request.data) - permitidos:
+                raise PermissionDenied(
+                    "Solo ADMIN puede cambiar el rol y los datos personales"
+                )
+        return super().partial_update(request, *args, **kwargs)
+
     def perform_update(self, serializer):
         datos = {
             c: serializer.validated_data.get(c, getattr(serializer.instance, c))
@@ -85,11 +113,47 @@ class AutorizadosViewSet(viewsets.ModelViewSet):
         if not puede_administrar(self.request.user, datos):
             raise PermissionDenied()
         serializer.save()
+        # La señal puede activar/desactivar la cuenta tras guardar el autorizado.
+        serializer.instance.estado_cuenta = (
+            Usuario.objects.filter(email=serializer.instance.email)
+            .values_list("estado_cuenta", flat=True)
+            .first()
+        )
 
     @action(detail=False, methods=["get"])
     def plantilla(self, request):
         libro = Workbook()
+        libro.active.title = "Estudiantes"
         libro.active.append(COLUMNAS)
+        instrucciones = libro.create_sheet("Instrucciones")
+        instrucciones.append(["Columna", "Descripción"])
+        for columna, descripcion in [
+            (
+                "email",
+                "Obligatorio: correo @inacapmail.cl. El rol siempre es ESTUDIANTE; los funcionarios usan su formulario.",
+            ),
+            (
+                "rut",
+                "Opcional: RUT chileno con dígito verificador; ejemplo 12345678-5.",
+            ),
+            ("nombre_completo", "Obligatorio: nombre y apellidos del estudiante."),
+            ("carrera_codigo", "Obligatorio: copiar un código de la hoja Carreras."),
+            (
+                "sede",
+                "Obligatoria: copiar el nombre de la hoja Sedes. Se ignoran tildes y mayúsculas.",
+            ),
+        ]:
+            instrucciones.append([columna, descripcion])
+        carreras = libro.create_sheet("Carreras")
+        carreras.append(["codigo", "nombre"])
+        for carrera in Carrera.objects.filter(activa=True, area__activa=True).order_by(
+            "codigo"
+        ):
+            carreras.append([carrera.codigo, carrera.nombre])
+        sedes = libro.create_sheet("Sedes")
+        sedes.append(["nombre"])
+        for sede in Sede.objects.filter(activa=True).order_by("orden", "nombre"):
+            sedes.append([sede.nombre])
         salida = io.BytesIO()
         libro.save(salida)
         respuesta = HttpResponse(
@@ -115,10 +179,16 @@ class AutorizadosViewSet(viewsets.ModelViewSet):
                 libro.close()
             else:
                 raise ValueError("Formato no admitido")
+            if filas and any(c in ("rol", "area") for c in filas[0]):
+                raise ValidationError(
+                    "La plantilla cambió: descarga la nueva desde el panel"
+                )
             if not filas or list(filas[0]) not in (COLUMNAS, COLUMNAS + ["activo"]):
                 raise ValueError("Las columnas deben coincidir con la plantilla")
             if len(filas) > 10001:
                 raise ValueError("Máximo 10000 filas por importación")
+        except ValidationError:
+            raise
         except Exception as exc:
             raise ValidationError(f"Archivo inválido: {exc}")
         archivo.seek(0)
@@ -132,37 +202,47 @@ class AutorizadosViewSet(viewsets.ModelViewSet):
                     k: str(v).strip() if v is not None else ""
                     for k, v in zip(filas[0], fila)
                 }
-                carrera = (
-                    Carrera.objects.get(codigo=datos["carrera_codigo"])
-                    if datos.get("carrera_codigo")
-                    else None
-                )
-                area = (
-                    Area.objects.get(nombre=datos["area"])
-                    if datos.get("area")
-                    else None
+                email = datos.get("email", "").strip().lower()
+                existente = UsuarioAutorizado.objects.filter(email=email).first()
+                if existente and existente.rol != Rol.ESTUDIANTE:
+                    raise ValueError("No se puede modificar un funcionario desde Excel")
+                if email.rsplit("@", 1)[-1] == "inacap.cl":
+                    raise ValueError(
+                        "Los funcionarios se registran desde el formulario de funcionarios"
+                    )
+                if email.rsplit("@", 1)[-1] != "inacapmail.cl":
+                    raise ValidationError(
+                        {"email": "El correo del estudiante debe ser @inacapmail.cl"}
+                    )
+                if not datos.get("carrera_codigo"):
+                    raise ValueError("carrera_codigo es obligatoria")
+                if not datos.get("sede"):
+                    raise ValueError("La sede es obligatoria")
+                carrera = Carrera.objects.get(
+                    codigo=datos["carrera_codigo"], activa=True, area__activa=True
                 )
                 from academico.normalizacion import normalizar_nombre
 
                 sede = next(
                     (
                         s
-                        for s in Sede.objects.all()
+                        for s in Sede.objects.filter(activa=True)
                         if normalizar_nombre(s.nombre)
-                        == normalizar_nombre(datos.get("sede", ""))
+                        == normalizar_nombre(datos["sede"])
                     ),
                     None,
                 )
-                if datos.get("sede") and not sede:
-                    raise ValueError("La sede no existe")
+                if not sede:
+                    raise ValueError("La sede no existe o está inactiva")
                 contenido = {
-                    k: datos.get(k, "")
-                    for k in ["email", "rut", "nombre_completo", "rol"]
+                    k: datos.get(k, "") for k in ["email", "rut", "nombre_completo"]
                 }
+                contenido["email"] = email
                 contenido.update(
-                    carrera=carrera.pk if carrera else None,
-                    area=area.pk if area else None,
-                    sede=sede.pk if sede else None,
+                    rol=Rol.ESTUDIANTE,
+                    carrera=carrera.pk,
+                    area=carrera.area_id,
+                    sede=sede.pk,
                 )
                 if "activo" in datos:
                     valores_activo = {

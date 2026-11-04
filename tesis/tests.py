@@ -244,7 +244,7 @@ class BackendTests(APITestCase):
     def excel(self, filas):
         libro = Workbook()
         libro.active.append(
-            ["email", "rut", "nombre_completo", "rol", "carrera_codigo", "area", "sede"]
+            ["email", "rut", "nombre_completo", "carrera_codigo", "sede"]
         )
         for fila in filas:
             libro.active.append(fila)
@@ -255,9 +255,9 @@ class BackendTests(APITestCase):
     def test_importacion_excel_upsert_errores(self):
         self.login(self.admin)
         filas = [
-            ["nuevo@inacapmail.cl", "1", "Nuevo", "ESTUDIANTE", "AP", "", "Arica"],
-            ["malo@gmail.com", "", "Malo", "ESTUDIANTE", "AP", "", "Arica"],
-            ["sin@inacap.cl", "", "Sin carrera", "ESTUDIANTE", "", "", "Arica"],
+            ["nuevo@inacapmail.cl", "12345678-5", "Nuevo", "AP", "Arica"],
+            ["malo@gmail.com", "", "Malo", "AP", "Arica"],
+            ["sin@inacap.cl", "", "Sin carrera", "", "Arica"],
         ]
         r = self.client.post(
             "/api/admin/autorizados/importar/",
@@ -284,9 +284,9 @@ class BackendTests(APITestCase):
     def test_importacion_ambito_y_patch_no_escalan_rol(self):
         self.login(self.coordinador)
         filas = [
-            ["ap@inacapmail.cl", "", "AP", "ESTUDIANTE", "AP", "", "Arica"],
-            ["iei@inacapmail.cl", "", "IEI", "ESTUDIANTE", "IEI", "", "Arica"],
-            ["admin@inacap.cl", "", "Admin", "ADMIN", "", "", "Arica"],
+            ["ap@inacapmail.cl", "", "AP", "AP", "Arica"],
+            ["iei@inacapmail.cl", "", "IEI", "IEI", "Arica"],
+            ["admin@inacap.cl", "", "Admin", "", "Arica"],
         ]
         r = self.client.post(
             "/api/admin/autorizados/importar/",
@@ -530,8 +530,8 @@ class BackendTests(APITestCase):
     def test_director_ambito_y_autorizados(self):
         self.login(self.director)
         filas = [
-            ["ap@inacap.cl", "", "AP", "COORDINADOR", "AP", "", "Arica"],
-            ["enf@inacap.cl", "", "ENF", "ESTUDIANTE", "ENF", "", "Arica"],
+            ["ap@inacapmail.cl", "", "AP", "AP", "Arica"],
+            ["enf@inacapmail.cl", "", "ENF", "ENF", "Arica"],
         ]
         r = self.client.post(
             "/api/admin/autorizados/importar/",
@@ -820,7 +820,7 @@ class BackendTests(APITestCase):
             ],
             "Arica",
         )
-        filas = [["no-es-email", "", "Inválido", "ESTUDIANTE", "AP", "", "Arica"]]
+        filas = [["no-es-email", "", "Inválido", "AP", "Arica"]]
         r = self.client.post(
             "/api/admin/autorizados/importar/",
             {"archivo": self.excel(filas)},
@@ -1141,8 +1141,8 @@ class BackendTests(APITestCase):
         token = RefreshToken.for_user(self.alumno)
         self.login(self.admin)
         csv = (
-            "email,rut,nombre_completo,rol,carrera_codigo,area,sede,activo\n"
-            + f"{self.alumno.email},,Alumno,ESTUDIANTE,AP,,Arica,false\n"
+            "email,rut,nombre_completo,carrera_codigo,sede,activo\n"
+            + f"{self.alumno.email},,Alumno,AP,Arica,false\n"
         )
         r = self.client.post(
             "/api/admin/autorizados/importar/",

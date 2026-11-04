@@ -18,6 +18,7 @@ from usuarios.auth_views import (
     CambiarPassword,
 )
 from usuarios.solicitudes import SolicitudesViewSet
+from usuarios.funcionarios import Funcionarios
 from tesis.views import TesisViewSet, MaterialViewSet
 from notificaciones.views import NotificacionesViewSet
 from academico.views import (
@@ -40,6 +41,7 @@ router.register("tesis", TesisViewSet, basename="tesis")
 router.register("materiales", MaterialViewSet, basename="materiales")
 router.register("admin/autorizados", AutorizadosViewSet, basename="autorizados")
 urlpatterns = [
+    path("api/admin/funcionarios/", Funcionarios.as_view()),
     path("api/auth/registro/", Registro.as_view()),
     path("api/auth/verificar-correo/", VerificarCorreo.as_view()),
     path("api/auth/reenviar-verificacion/", ReenviarVerificacion.as_view()),
