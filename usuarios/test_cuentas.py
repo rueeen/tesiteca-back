@@ -1,3 +1,4 @@
+from usuarios.tests_helpers import crear_usuario_activo
 from datetime import timedelta
 from io import StringIO
 from unittest.mock import patch
@@ -52,28 +53,28 @@ class CuentasTests(APITestCase):
         self.otra = Sede.objects.create(
             nombre="Santiago", ciudad="Santiago", region="RM", orden=7
         )
-        self.coord = Usuario.objects.create_user(
+        self.coord = crear_usuario_activo(
             "coord@inacap.cl",
             nombre_completo="Coordinador",
             rol=Rol.COORDINADOR,
             carrera=self.carrera,
             sede=self.sede,
         )
-        self.coord_otra = Usuario.objects.create_user(
+        self.coord_otra = crear_usuario_activo(
             "otra@inacap.cl",
             nombre_completo="Otra sede",
             rol=Rol.COORDINADOR,
             carrera=self.carrera,
             sede=self.otra,
         )
-        self.director = Usuario.objects.create_user(
+        self.director = crear_usuario_activo(
             "director@inacap.cl",
             nombre_completo="Director",
             rol=Rol.DIRECTOR,
             area=self.area,
             sede=self.sede,
         )
-        self.admin = Usuario.objects.create_user(
+        self.admin = crear_usuario_activo(
             "admin@inacap.cl", nombre_completo="Admin", rol=Rol.ADMIN
         )
 
@@ -210,6 +211,12 @@ class CuentasTests(APITestCase):
             (EstadoCuenta.DESACTIVADA, "desactivada"),
         ]:
             IntentoLogin.objects.all().delete()
+            u.email_verificado_en = (
+                None
+                if estado == EstadoCuenta.PENDIENTE_VERIFICACION
+                else timezone.now()
+            )
+            u.save(update_fields=["email_verificado_en"])
             u.cambiar_estado(estado)
             incorrecta = self.client.post(
                 "/api/auth/login/", {"email": u.email, "password": "incorrecta"}
@@ -386,6 +393,7 @@ class CuentasTests(APITestCase):
                 "crear_admin",
                 "inicial@inacap.cl",
                 nombre="Administrador inicial",
+                sin_verificar=True,
                 stdout=StringIO(),
             )
         u = Usuario.objects.get(email="inicial@inacap.cl")
@@ -453,9 +461,9 @@ class CuentasTests(APITestCase):
 
         u = self.registrar()
         with self.assertRaises(IntegrityError), transaction.atomic():
-            Usuario.objects.create_user("duplicado@inacap.cl", rut=u.rut, rol=Rol.ADMIN)
+            crear_usuario_activo("duplicado@inacap.cl", rut=u.rut, rol=Rol.ADMIN)
         with self.assertRaises(IntegrityError), transaction.atomic():
-            Usuario.objects.create_user(
+            crear_usuario_activo(
                 "sin-sede@inacap.cl", rol=Rol.COORDINADOR, carrera=self.carrera
             )
 

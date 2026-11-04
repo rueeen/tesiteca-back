@@ -164,6 +164,14 @@ class SolicitanteSerializer(UsuarioMiniSerializer):
 
 
 class SolicitudSerializer(serializers.ModelSerializer):
+    correo_validado = serializers.SerializerMethodField()
+    estado_cuenta = serializers.CharField(
+        source="usuario.estado_cuenta", read_only=True
+    )
+
+    def get_correo_validado(self, obj):
+        return obj.usuario.email_verificado_en is not None
+
     usuario = SolicitanteSerializer(read_only=True)
     carrera = CarreraMiniSerializer(read_only=True)
     sede = SedeMiniSerializer(read_only=True)
@@ -185,6 +193,8 @@ class SolicitudSerializer(serializers.ModelSerializer):
             "revisada_por",
             "revisada_en",
             "puede_cambiar_rol",
+            "correo_validado",
+            "estado_cuenta",
         ]
 
     def get_puede_cambiar_rol(self, obj):

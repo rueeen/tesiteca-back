@@ -6,6 +6,30 @@ from .models import Usuario, UsuarioAutorizado, ImportacionLote
 
 @admin.register(Usuario)
 class UsuarioAdmin(UserAdmin):
+    readonly_fields = ["email_verificado_en", "is_active"]
+
+    def save_model(self, request, obj, form, change):
+        from .models import EstadoCuenta
+        from .cuentas import aprobar_cuenta, enviar_verificacion, revocar_sesiones
+
+        estado = obj.estado_cuenta
+        if not change:
+            obj.estado_cuenta = EstadoCuenta.PENDIENTE_VERIFICACION
+            obj.email_verificado_en = None
+        super().save_model(request, obj, form, change)
+        if not change:
+            aprobar_cuenta(
+                obj,
+                {c: getattr(obj, c) for c in ["rol", "carrera", "area", "sede"]},
+                revisor=request.user,
+                mensaje="Creado desde admin",
+            )
+            enviar_verificacion(obj)
+        else:
+            obj.cambiar_estado(estado)
+            if not obj.is_active:
+                revocar_sesiones(obj)
+
     add_form = CrearUsuarioForm
     form = EditarUsuarioForm
     ordering = ["email"]

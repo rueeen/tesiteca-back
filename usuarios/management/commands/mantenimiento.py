@@ -5,7 +5,13 @@ from django.conf import settings
 from django.core.management import BaseCommand, call_command
 from django.db.models import Q
 from django.utils import timezone
-from usuarios.models import IntentoLogin, ImportacionLote, Usuario, EstadoCuenta
+from usuarios.models import (
+    IntentoLogin,
+    ImportacionLote,
+    Usuario,
+    EstadoCuenta,
+    UsuarioAutorizado,
+)
 from notificaciones.models import TicketWS, Notificacion
 
 
@@ -28,6 +34,25 @@ class Command(BaseCommand):
 
     def handle(self, *args, **opciones):
         ahora = timezone.now()
+        creados = 0
+        for usuario in Usuario.objects.filter(estado_cuenta=EstadoCuenta.ACTIVA):
+            _, nuevo = UsuarioAutorizado.objects.get_or_create(
+                email=usuario.email,
+                defaults={
+                    campo: getattr(usuario, campo)
+                    for campo in [
+                        "rut",
+                        "nombre_completo",
+                        "rol",
+                        "carrera",
+                        "area",
+                        "sede",
+                    ]
+                }
+                | {"activo": True},
+            )
+            creados += int(nuevo)
+        self.stdout.write(f"Autorizados faltantes creados: {creados}")
         call_command("flushexpiredtokens", stdout=self.stdout)
         self.stdout.write("Tokens JWT vencidos: limpieza completada")
         intentos = IntentoLogin.objects.filter(

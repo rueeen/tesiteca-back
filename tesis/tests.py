@@ -1,3 +1,4 @@
+from usuarios.tests_helpers import crear_usuario_activo
 import json
 import shutil
 import tempfile
@@ -85,29 +86,29 @@ class BackendTests(APITestCase):
         self.otra = Carrera.objects.create(
             nombre="Enfermería", codigo="ENF", area=self.otra_area
         )
-        self.admin = Usuario.objects.create_user(
+        self.admin = crear_usuario_activo(
             "admin@inacap.cl", nombre_completo="Admin", rol=Rol.ADMIN, sede=self.sede
         )
-        self.alumno = Usuario.objects.create_user(
+        self.alumno = crear_usuario_activo(
             "alumno@inacapmail.cl",
             nombre_completo="Alumno AP",
             carrera=self.ap,
             sede=self.sede,
         )
-        self.otro = Usuario.objects.create_user(
+        self.otro = crear_usuario_activo(
             "otro@inacapmail.cl",
             nombre_completo="Alumno IEI",
             carrera=self.iei,
             sede=self.sede,
         )
-        self.coordinador = Usuario.objects.create_user(
+        self.coordinador = crear_usuario_activo(
             "coord@inacap.cl",
             nombre_completo="Coordinador",
             rol=Rol.COORDINADOR,
             carrera=self.ap,
             sede=self.sede,
         )
-        self.director = Usuario.objects.create_user(
+        self.director = crear_usuario_activo(
             "dir@inacap.cl",
             nombre_completo="Director",
             rol=Rol.DIRECTOR,
@@ -639,7 +640,7 @@ class BackendTests(APITestCase):
         )
         propias = self.client.get("/api/tesis/mis-tesis/").data["results"]
         self.comprobar_contrato_detalle(propias[0])
-        ajeno = Usuario.objects.create_user(
+        ajeno = crear_usuario_activo(
             "ajeno@inacapmail.cl",
             nombre_completo="Ajeno",
             carrera=self.ap,
@@ -854,7 +855,7 @@ class BackendTests(APITestCase):
             self.assertEqual(len(lector.pages), 2)
             for pagina in lector.pages:
                 pagina.extract_text(visitor_text=visitar)
-            self.assertEqual([pos[2] for pos in posiciones], [62, 62])
+            self.assertEqual([pos[2] for pos in posiciones], [60, 60])
         with tesis.pdf_marcado.open("rb") as marcado:
             salida = aplicar_marca_lector(marcado, self.alumno, "127.0.0.1")
         posiciones.clear()
@@ -863,7 +864,7 @@ class BackendTests(APITestCase):
         self.assertIn("INACAP", texto)
         self.assertIn(self.alumno.email, texto)
         lector_pos = [p for p in posiciones if "Consultado por" in p[0]]
-        self.assertEqual((lector_pos[0][1], lector_pos[0][2]), (62, 738))
+        self.assertEqual((lector_pos[0][1], lector_pos[0][2]), (63, 733.5))
 
     def test_serializacion_detalle_sin_n_mas_uno(self):
         from django.db import connection
@@ -931,6 +932,9 @@ class BackendTests(APITestCase):
                 if autor.usuario:
                     self.assertEqual(autor.usuario.carrera_id, tesis.carrera_id)
         alumno_iei = Usuario.objects.get(email="demo1@inacapmail.cl")
+        self.assertEqual(alumno_iei.estado_cuenta, "PENDIENTE_VERIFICACION")
+        self.assertIsNone(alumno_iei.email_verificado_en)
+        self.assertEqual(alumno_iei.solicitud.estado, "APROBADA")
         self.assertEqual(alumno_iei.carrera.codigo, "IEI")
         self.login(alumno_iei)
         r = self.client.get("/api/tesis/?page_size=48")
@@ -1227,7 +1231,7 @@ class BackendTests(APITestCase):
 
     def test_notificaciones_y_autorizados_no_cruzan_sedes(self):
         otra_sede = Sede.objects.create(nombre="Otra sede", ciudad="Otra", region="I")
-        otro_coord = Usuario.objects.create_user(
+        otro_coord = crear_usuario_activo(
             "coord-otra@inacap.cl",
             nombre_completo="Otra sede",
             rol=Rol.COORDINADOR,
@@ -1313,3 +1317,105 @@ class BackendTests(APITestCase):
                     self.assertEqual(
                         item["sede"]["region"]["nombre"], "Arica y Parinacota"
                     )
+
+    def test_marcas_visibles_en_crop_rotacion_fondo_negro_y_horizontal(self):
+        from reportlab.lib.pagesizes import A4, landscape
+        from .marca_agua import TEXTO_DIAGONAL
+        from math import isclose
+
+        salida = BytesIO()
+        lienzo = canvas.Canvas(salida, pagesize=A4)
+        for i in range(5):
+            lienzo.setPageSize(landscape(A4) if i == 4 else A4)
+            if i == 3:
+                lienzo.setFillColorRGB(0, 0, 0)
+                lienzo.rect(0, 0, *A4, fill=1, stroke=0)
+            lienzo.showPage()
+        lienzo.save()
+        lector = PdfReader(BytesIO(salida.getvalue()))
+        escritor = PdfWriter()
+        for i, pagina in enumerate(lector.pages):
+            if i == 1:
+                pagina.cropbox.lower_left = (60, 80)
+                pagina.cropbox.upper_right = (520, 760)
+            if i == 2:
+                pagina.rotate(90)
+            escritor.add_page(pagina)
+        original = BytesIO()
+        escritor.write(original)
+        tesis = self.tesis(pdf=SimpleUploadedFile("variadas.pdf", original.getvalue()))
+        with tesis.pdf_marcado.open("rb") as archivo:
+            fijo = archivo.read()
+
+        def comprobar(datos, lector_personal=False):
+            lector = PdfReader(BytesIO(datos))
+            self.assertEqual(len(lector.pages), 5)
+            for numero, pagina in enumerate(lector.pages):
+                posiciones = []
+
+                def visitar(texto, cm, tm, fuente, tamano):
+                    if (
+                        TEXTO_DIAGONAL in texto
+                        or "Prohibida su reproducción" in texto
+                        or "Consultado por" in texto
+                    ):
+                        x = cm[0] * tm[4] + cm[2] * tm[5] + cm[4]
+                        y = cm[1] * tm[4] + cm[3] * tm[5] + cm[5]
+                        posiciones.append((texto, x, y))
+
+                texto = pagina.extract_text(visitor_text=visitar)
+                with self.subTest(pagina=numero, lector=lector_personal):
+                    self.assertGreaterEqual(texto.count(TEXTO_DIAGONAL), 3)
+                    self.assertIn("Prohibida su reproducción", texto)
+                    if lector_personal:
+                        self.assertIn("Consultado por", texto)
+                    caja = pagina.cropbox
+                    for etiqueta, x, y in posiciones:
+                        self.assertTrue(
+                            float(caja.left) <= x <= float(caja.right),
+                            (etiqueta, x, caja),
+                        )
+                        self.assertTrue(
+                            float(caja.bottom) <= y <= float(caja.top),
+                            (etiqueta, y, caja),
+                        )
+                    self.assertIn(b"2 Tr", pagina.get_contents().get_data())
+                    estados = pagina["/Resources"]["/ExtGState"].values()
+                    self.assertTrue(
+                        any(isclose(float(e.get("/CA", 0)), 0.35) for e in estados)
+                    )
+
+        comprobar(fijo)
+        marcado = aplicar_marca_lector(BytesIO(fijo), self.alumno, "127.0.0.1")
+        comprobar(marcado.getvalue(), True)
+
+    def test_regenerar_marcas_filtra_y_continua_si_falla(self):
+        from django.core.management import call_command
+        from io import StringIO
+
+        a = self.tesis(titulo="Para regenerar A")
+        b = self.tesis(titulo="Para regenerar B")
+        salida = StringIO()
+        with self.captureOnCommitCallbacks(execute=True):
+            call_command("regenerar_marcas", id=a.pk, stdout=salida)
+        a.refresh_from_db()
+        self.assertIn("Regeneradas: 1", salida.getvalue())
+        from .marca_agua import regenerar_marca
+
+        def regeneracion(tesis):
+            if tesis.pk == a.pk:
+                raise OSError("Original no disponible")
+            return regenerar_marca(tesis)
+
+        with patch(
+            "tesis.management.commands.regenerar_marcas.regenerar_marca",
+            side_effect=regeneracion,
+        ):
+            with self.assertLogs(
+                "tesis.management.commands.regenerar_marcas", level="ERROR"
+            ):
+                salida = StringIO()
+                errores = StringIO()
+                with self.captureOnCommitCallbacks(execute=True):
+                    call_command("regenerar_marcas", stdout=salida, stderr=errores)
+        self.assertIn("Regeneradas: 1; errores: 1; total: 2", salida.getvalue())

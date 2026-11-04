@@ -23,6 +23,7 @@ from .serializers import (
     AutorizadoSerializer,
 )
 from .permisos import GestionaAutorizados, puede_administrar
+from .cuentas import puede_iniciar_sesion
 
 
 def error_legible(detalle, campo=""):
@@ -250,14 +251,7 @@ class RenovarSesion(SesionCookie):
                     .filter(pk=token["user_id"])
                     .first()
                 )
-                if (
-                    usuario is None
-                    or not usuario.is_active
-                    or usuario.estado_cuenta != EstadoCuenta.ACTIVA
-                    or not UsuarioAutorizado.objects.filter(
-                        email=usuario.email, activo=True
-                    ).exists()
-                ):
+                if not puede_iniciar_sesion(usuario):
                     token.blacklist()
                     return borrar_refresh(
                         Response({"detail": "Sesión no autorizada"}, status=401)

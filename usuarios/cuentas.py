@@ -117,7 +117,29 @@ def avisar_solicitud(solicitud):
     )
 
 
-def aprobar_cuenta(usuario, datos, revisor=None):
+def puede_iniciar_sesion(usuario):
+    return bool(
+        usuario
+        and usuario.is_active
+        and usuario.estado_cuenta == EstadoCuenta.ACTIVA
+        and usuario.email_verificado_en is not None
+    )
+
+
+def sincronizar_autorizado(usuario):
+    # Solo actualizar si hace falta: evita recursión entre el servicio y la señal.
+    datos = {
+        campo: getattr(usuario, campo)
+        for campo in ["rut", "nombre_completo", "rol", "carrera", "area", "sede"]
+    }
+    datos["activo"] = True
+    actual = UsuarioAutorizado.objects.filter(email=usuario.email).first()
+    if actual is None or any(getattr(actual, k) != v for k, v in datos.items()):
+        UsuarioAutorizado.objects.update_or_create(email=usuario.email, defaults=datos)
+
+
+@transaction.atomic
+def aprobar_cuenta(usuario, datos, revisor=None, mensaje=None):
     from academico.models import Area
 
     carrera = datos.get("carrera")
@@ -130,14 +152,22 @@ def aprobar_cuenta(usuario, datos, revisor=None):
         setattr(usuario, campo, datos.get(campo))
     usuario.area = area
     usuario.save(update_fields=["rol", "carrera", "area", "sede"])
-    usuario.cambiar_estado(EstadoCuenta.ACTIVA)
-    SolicitudAcceso.objects.filter(usuario=usuario).update(
-        estado="APROBADA",
-        motivo_rechazo="",
-        rol_solicitado=usuario.rol,
-        carrera=usuario.carrera,
-        sede=usuario.sede,
-        revisada_por=revisor,
-        revisada_en=timezone.now(),
+    aprobacion = {
+        "estado": "APROBADA",
+        "motivo_rechazo": "",
+        "rol_solicitado": usuario.rol,
+        "carrera": usuario.carrera,
+        "sede": usuario.sede,
+        "revisada_por": revisor,
+        "revisada_en": timezone.now(),
+    }
+    if mensaje is not None:
+        aprobacion["mensaje"] = mensaje
+    SolicitudAcceso.objects.update_or_create(usuario=usuario, defaults=aprobacion)
+    usuario.cambiar_estado(
+        EstadoCuenta.ACTIVA
+        if usuario.email_verificado_en
+        else EstadoCuenta.PENDIENTE_VERIFICACION
     )
+    sincronizar_autorizado(usuario)
     return usuario

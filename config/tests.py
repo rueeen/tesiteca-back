@@ -1,3 +1,4 @@
+from usuarios.tests_helpers import crear_usuario_activo
 import hashlib
 import tempfile
 from datetime import timedelta
@@ -182,7 +183,7 @@ class ProxyTests(APITestCase):
 
 class ComandosDeployTests(APITestCase):
     def setUp(self):
-        self.usuario = Usuario.objects.create_user(
+        self.usuario = crear_usuario_activo(
             "mantenimiento@inacap.cl", nombre_completo="Mantenimiento", rol="ADMIN"
         )
 

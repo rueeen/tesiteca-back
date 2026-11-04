@@ -108,3 +108,44 @@ for caso in casos:
                 timeout=60,
             )
         self.assertEqual(resultado.returncode, 0, resultado.stderr)
+
+    def test_migracion_legadas_correo_y_aprobacion(self):
+        codigo = """
+import os
+import django
+django.setup()
+from django.db import connection
+from django.db.migrations.executor import MigrationExecutor
+connection.settings_dict['NAME'] = os.environ['PRUEBA_MIGRACION_DB']
+ejecutor = MigrationExecutor(connection)
+previas = [('usuarios','0003_usuario_sede_obligatoria_no_admin'), ('academico','0002_alter_sede_options_carrera_duracion_semestres_and_more')]
+ejecutor.migrate(previas)
+apps = ejecutor.loader.project_state(previas).apps
+Usuario = apps.get_model('usuarios','Usuario')
+u=Usuario.objects.create(email='legada@inacap.cl',nombre_completo='Legada',rol='ADMIN',estado_cuenta='ACTIVA',is_active=True,email_verificado_en=None)
+p=Usuario.objects.create(email='pendiente@inacap.cl',nombre_completo='Pendiente',rol='ADMIN',estado_cuenta='PENDIENTE_VERIFICACION',is_active=False,email_verificado_en=None)
+ejecutor = MigrationExecutor(connection)
+ejecutor.migrate(ejecutor.loader.graph.leaf_nodes())
+from usuarios.models import Usuario, SolicitudAcceso
+actual=Usuario.objects.get(pk=u.pk)
+assert actual.email_verificado_en is not None and actual.estado_cuenta=='ACTIVA'
+aprobada=SolicitudAcceso.objects.get(usuario=actual)
+assert aprobada.estado=='APROBADA' and aprobada.revisada_por_id is None and aprobada.motivo_rechazo=='' and aprobada.mensaje=='Cuenta legada'
+assert Usuario.objects.get(pk=p.pk).email_verificado_en is None
+assert not SolicitudAcceso.objects.filter(usuario_id=p.pk).exists()
+"""
+        with tempfile.TemporaryDirectory() as carpeta:
+            entorno = {
+                **os.environ,
+                "DJANGO_SETTINGS_MODULE": "config.settings",
+                "PRUEBA_MIGRACION_DB": str(Path(carpeta) / "legadas.sqlite3"),
+            }
+            resultado = subprocess.run(
+                [sys.executable, "-c", codigo],
+                cwd=settings.BASE_DIR,
+                env=entorno,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        self.assertEqual(resultado.returncode, 0, resultado.stderr)

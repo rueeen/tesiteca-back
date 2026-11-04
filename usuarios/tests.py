@@ -1,3 +1,4 @@
+from usuarios.tests_helpers import crear_usuario_activo
 from datetime import timedelta
 from io import StringIO
 from unittest.mock import patch
@@ -26,11 +27,11 @@ class SeguridadTests(APITestCase):
         area = Area.objects.create(nombre="Informática")
         carrera = Carrera.objects.create(nombre="Informática", codigo="IEI", area=area)
         datos = {"nombre_completo": "Estudiante", "carrera": carrera, "sede": self.sede}
-        self.usuario = Usuario.objects.create_user("alumno@inacapmail.cl", **datos)
+        self.usuario = crear_usuario_activo("alumno@inacapmail.cl", **datos)
         self.autorizado = UsuarioAutorizado.objects.create(
             email=self.usuario.email, **datos
         )
-        self.admin = Usuario.objects.create_user(
+        self.admin = crear_usuario_activo(
             "admin@inacap.cl", rol=Rol.ADMIN, nombre_completo="Admin"
         )
 
@@ -175,7 +176,7 @@ class SeguridadTests(APITestCase):
             BlacklistedToken.objects.filter(token__jti=otro["jti"]).exists()
         )
 
-    def test_refresh_revisa_lista_blanca_y_usuario_activo(self):
+    def test_refresh_sin_lista_blanca_y_usuario_activo(self):
         for tipo in ["ausente", "usuario_inactivo"]:
             with self.subTest(tipo=tipo):
                 self.usuario.cambiar_estado(EstadoCuenta.ACTIVA)
@@ -185,7 +186,9 @@ class SeguridadTests(APITestCase):
                 else:
                     self.usuario.cambiar_estado(EstadoCuenta.DESACTIVADA)
                 self.client.cookies[settings.REFRESH_COOKIE_NAME] = str(token)
-                self.assertEqual(self.renovar().status_code, 401)
+                self.assertEqual(
+                    self.renovar().status_code, 200 if tipo == "ausente" else 401
+                )
                 self.assertTrue(
                     BlacklistedToken.objects.filter(token__jti=token["jti"]).exists()
                 )

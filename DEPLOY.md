@@ -39,7 +39,7 @@ python manage.py probar_correo rvalencia@inacap.cl
 python manage.py verificar_deploy
 ```
 
-`seed_demo` crea sede, área, carreras y el ADMIN en la lista blanca. Agregar `--con-ejemplos` **solo para una demo**; genera PDFs que consumen cuota. `crear_admin` pide nombre y contraseña con entrada privada y habilita el primer acceso ADMIN, también a `/admin/`. El login de la API usa contraseña; registro, verificación de correo y aprobación preceden al primer acceso. La lista blanca funciona como preaprobación. Revisar también spam tras `probar_correo`. El comando muestra host, puerto y usuario, nunca la contraseña. `verificar_deploy` marca ✔/✘ y termina con código 1 ante fallos críticos. También se puede ejecutar `python manage.py check --deploy`: los avisos sobre HSTS para subdominios/preload requieren decidir la política del dominio y no se silencian.
+`seed_demo` crea sede, área, carreras y el ADMIN en la lista blanca. Agregar `--con-ejemplos` **solo para una demo**; genera PDFs que consumen cuota. `crear_admin` pide nombre y contraseña con entrada privada, registra la aprobación y envía el enlace; habilita el primer acceso ADMIN, también a `/admin/`, después de validar el correo. El login de la API usa contraseña; registro, verificación de correo y aprobación preceden al primer acceso. La lista blanca funciona como preaprobación. Revisar también spam tras `probar_correo`. El comando muestra host, puerto y usuario, nunca la contraseña. `verificar_deploy` marca ✔/✘ y termina con código 1 ante fallos críticos. También se puede ejecutar `python manage.py check --deploy`: los avisos sobre HSTS para subdominios/preload requieren decidir la política del dominio y no se silencian.
 
 ## 2. Crear la web app WSGI
 
@@ -170,3 +170,27 @@ SMTP solo se utiliza para enlaces de verificación (48 h) y recuperación (1 h),
 ## Corrección de enlaces y resúmenes (migración 0006)
 
 Aplicar `python manage.py migrate` y luego Reload. La migración `0006_renormalizar_resumen` reaplica la normalización normativa con una copia congelada del algoritmo; `0005` no se modifica. No puede reconstruir el texto original si una normalización anterior ya alteró sus saltos: esos registros requieren el texto fuente para corregirlos con fidelidad. Las nuevas cargas y ediciones usan el algoritmo corregido, con los diez casos compartidos en `tesis/tests_fixtures/resumen_casos.json`.
+
+
+## Actualizar regla de cuentas y marcas visibles
+
+```bash
+cd ~/tesiteca-back
+source ~/.virtualenvs/tesiteca/bin/activate
+cp db.sqlite3 ~/db.sqlite3.respaldo-$(date +%F)
+git pull
+pip install --no-cache-dir -r requirements.txt
+python manage.py migrate
+python manage.py regenerar_marcas
+python manage.py verificar_deploy
+```
+
+Después pulsar **Reload**. El hotfix de sede en el listado se mantiene. La regeneración usa siempre los originales, muestra progreso y continúa si una tesis falla; revisar el resumen de errores y volver a intentar con `--id N` una vez reparado el archivo original. Requiere espacio temporal para el nuevo PDF marcado; los archivos anteriores se eliminan tras confirmar la actualización.
+
+Toda cuenta necesita correo validado por enlace y aprobación registrada. Aprobar antes del correo mantiene PENDIENTE_VERIFICACION y al validar queda ACTIVA; validar antes mantiene PENDIENTE_APROBACION hasta la aprobación. La lista blanca sigue preaprobando con `PREAPROBACION_LISTA_BLANCA=True` (default); poner False obliga a resolver las solicitudes desde el panel. No deshabilita el requisito de correo en ninguno de los dos modos.
+
+`crear_admin rvalencia@inacap.cl` registra una aprobación por consola, pide contraseña de forma privada y envía el enlace: **Revisa tu correo para validar la cuenta**. Una cuenta ADMIN que ya estaba activa conserva la validación al actualizar nombre/contraseña. Solo en una emergencia con SMTP caído usar `python manage.py crear_admin rvalencia@inacap.cl --sin-verificar`: marca el correo como validado por excepción explícita y muestra una advertencia amarilla. No utilizarlo como procedimiento habitual.
+
+El formulario Usuarios → Agregar del admin también registra aprobación (con el administrador que la creó), envía el enlace y deja pendiente de verificación. No permite seleccionar ACTIVA sin las dos condiciones. Login y refresh comparten la misma regla y ya no exigen buscar un autorizado en cada sesión; el mantenimiento sincroniza los autorizados faltantes.
+
+La migración de compatibilidad completa fecha de correo para cuentas legadas ACTIVA y crea aprobación «Cuenta legada» solo cuando no existía solicitud. No cambia una decisión pendiente/rechazada: si encuentra una cuenta ACTIVA con una solicitud no aprobada, se detiene para que el propietario revise esa inconsistencia antes de volver a ejecutar migrate.

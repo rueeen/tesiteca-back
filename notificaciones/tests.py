@@ -1,3 +1,4 @@
+from usuarios.tests_helpers import crear_usuario_activo
 import hashlib
 from datetime import timedelta
 from asgiref.sync import sync_to_async
@@ -21,7 +22,7 @@ from .servicios import notificar
 class WebSocketTests(TransactionTestCase):
     def setUp(self):
         cache.clear()
-        self.usuario = Usuario.objects.create_user(
+        self.usuario = crear_usuario_activo(
             "socket@inacap.cl", nombre_completo="Socket", rol="ADMIN"
         )
 

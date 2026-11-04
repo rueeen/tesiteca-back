@@ -29,15 +29,16 @@ class SolicitudesViewSet(viewsets.GenericViewSet):
     search_fields = ["usuario__email", "usuario__nombre_completo", "usuario__rut"]
 
     def get_queryset(self):
-        qs = (
-            SolicitudAcceso.objects.select_related(
-                "usuario", "carrera", "sede", "revisada_por"
+        qs = SolicitudAcceso.objects.select_related(
+            "usuario", "carrera", "sede", "revisada_por"
+        ).filter(
+            Q(
+                usuario__estado_cuenta__in=[
+                    EstadoCuenta.PENDIENTE_VERIFICACION,
+                    EstadoCuenta.PENDIENTE_APROBACION,
+                ]
             )
-            .filter(usuario__email_verificado_en__isnull=False)
-            .filter(
-                Q(usuario__estado_cuenta=EstadoCuenta.PENDIENTE_APROBACION)
-                | Q(estado__in=["APROBADA", "RECHAZADA"])
-            )
+            | Q(estado__in=["APROBADA", "RECHAZADA"])
         )
         u = self.request.user
         if u.rol == Rol.ADMIN:
@@ -65,7 +66,10 @@ class SolicitudesViewSet(viewsets.GenericViewSet):
                 "pendientes": self.get_queryset()
                 .filter(
                     estado="PENDIENTE",
-                    usuario__estado_cuenta=EstadoCuenta.PENDIENTE_APROBACION,
+                    usuario__estado_cuenta__in=[
+                        EstadoCuenta.PENDIENTE_VERIFICACION,
+                        EstadoCuenta.PENDIENTE_APROBACION,
+                    ],
                 )
                 .count()
             }
@@ -75,9 +79,9 @@ class SolicitudesViewSet(viewsets.GenericViewSet):
     @transaction.atomic
     def aprobar(self, request, pk=None):
         solicitud = self.get_object()
-        if (
-            solicitud.estado != "PENDIENTE"
-            or solicitud.usuario.estado_cuenta != EstadoCuenta.PENDIENTE_APROBACION
+        if solicitud.estado != "PENDIENTE" or solicitud.usuario.estado_cuenta not in (
+            EstadoCuenta.PENDIENTE_VERIFICACION,
+            EstadoCuenta.PENDIENTE_APROBACION,
         ):
             raise ValidationError("La solicitud no está pendiente")
         serial = AprobacionSerializer(data=request.data)
@@ -114,21 +118,6 @@ class SolicitudesViewSet(viewsets.GenericViewSet):
                 }
             )
         usuario = aprobar_cuenta(solicitud.usuario, datos, revisor=request.user)
-        UsuarioAutorizado.objects.update_or_create(
-            email=usuario.email,
-            defaults={
-                campo: getattr(usuario, campo)
-                for campo in [
-                    "rut",
-                    "nombre_completo",
-                    "rol",
-                    "carrera",
-                    "area",
-                    "sede",
-                ]
-            }
-            | {"activo": True},
-        )
         solicitud.refresh_from_db()
         return Response(self.get_serializer(solicitud).data)
 
@@ -136,9 +125,9 @@ class SolicitudesViewSet(viewsets.GenericViewSet):
     @transaction.atomic
     def rechazar(self, request, pk=None):
         solicitud = self.get_object()
-        if (
-            solicitud.estado != "PENDIENTE"
-            or solicitud.usuario.estado_cuenta != EstadoCuenta.PENDIENTE_APROBACION
+        if solicitud.estado != "PENDIENTE" or solicitud.usuario.estado_cuenta not in (
+            EstadoCuenta.PENDIENTE_VERIFICACION,
+            EstadoCuenta.PENDIENTE_APROBACION,
         ):
             raise ValidationError("La solicitud no está pendiente")
         motivo = request.data.get("motivo", "")
