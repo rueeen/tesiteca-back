@@ -18,14 +18,14 @@ python manage.py runserver
 
 No sobrescribir un `.env` existente ni versionar secretos, cookies, SQLite o archivos privados. Producción WSGI instala **solo `requirements.txt`**. `requirements-asgi.txt` añade Uvicorn/Redis para planes compatibles; `requirements-dev.txt` añade Daphne para todas las pruebas.
 
-El acceso ahora usa **contraseña**. Los usuarios que ingresaban con el flujo anterior conservan sus datos y pasan a ACTIVA si estaban activos. Quienes no tienen contraseña utilizable deben usar **Olvidé mi contraseña**. No se genera ni publica una contraseña por defecto. El administrador inicial se prepara con `crear_admin`, que valida correo `@inacap.cl`, pide nombre y contraseña de forma privada y configura acceso a `/admin/`.
+El acceso ahora usa **contraseña**. Los usuarios que ingresaban con el flujo anterior conservan sus datos y pasan a ACTIVA si estaban activos. Quienes no tienen contraseña utilizable deben usar **Olvidé mi contraseña**. No se genera ni publica una contraseña por defecto. El administrador inicial se prepara con `crear_admin`, que valida correo `@inacap.cl`, pide nombre y contraseña de forma privada, registra la aprobación y envía el enlace de correo. Solo después de validarlo habilita acceso, también a `/admin/`. `--sin-verificar` es una excepción de emergencia explícita y emite una advertencia.
 
 Antes de actualizar producción respaldar SQLite y archivos privados. Las migraciones conservan usuarios, tesis, autorías y archivos; renombran el campo académico anterior a `periodo` y normalizan resúmenes. Los identificadores del modelo de acceso retirado permanecen exclusivamente en las migraciones históricas necesarias para actualizar instalaciones anteriores.
 
 ## Flujo de cuentas
 
 1. Registro con correo institucional, RUT chileno válido, sede y contraseña de al menos 10 caracteres. Estudiantes `@inacapmail.cl` solicitan solo ESTUDIANTE; funcionarios `@inacap.cl`, COORDINADOR o DIRECTOR. ADMIN nunca se solicita.
-2. Un correo de verificación (48 h, un solo uso). Si hay una entrada activa en la lista blanca, queda preaprobado; de lo contrario pasa a aprobación y se notifica en la app a los revisores correspondientes.
+2. Un correo de verificación (48 h, un solo uso). Si `PREAPROBACION_LISTA_BLANCA=True` y hay una entrada activa en la lista blanca, queda preaprobado; de lo contrario pasa a aprobación y se notifica en la app a los revisores correspondientes.
 3. Coordinador: estudiantes de su carrera y sede. Director: estudiantes/coordinadores de su área y sede. ADMIN: alcance nacional y único aprobador de DIRECTOR. Si un director no indicó carrera y existe más de un área, ADMIN debe seleccionar una carrera para determinar su área al aprobar.
 4. El login correcto de una cuenta ACTIVA devuelve access y usuario. No envía correo. Una solicitud rechazada puede volver a presentarse sin repetir la verificación de correo.
 5. La recuperación por correo dura una hora, solo para cuentas activas. Restablecer invalida los refresh anteriores y elimina bloqueos por intentos. El cambio autenticado exige contraseña actual y rota la sesión.
@@ -63,7 +63,7 @@ Access solo en memoria; refresh solo en cookie httpOnly, SameSite=Strict, Path=/
 - `POST /api/solicitudes/{id}/aprobar/` con `{rol?,carrera?,sede?}` → item actualizado. Solo ADMIN puede cambiar lo solicitado.
 - `POST /api/solicitudes/{id}/rechazar/` con `{motivo}` obligatorio, máximo 300 caracteres.
 
-No se muestran correos sin verificar. Se conserva historial APROBADA/RECHAZADA, siempre limitado al ámbito del aprobador. Aprobar actualiza la lista blanca. Importar un preaprobado cuyo usuario ya verificó y está pendiente aprueba automáticamente; no habilita cuentas que aún no verificaron correo.
+Las solicitudes pendientes pueden aprobarse antes de validar el correo: permanecen en PENDIENTE_VERIFICACION. En el historial APROBADA también aparecen esas cuentas; cada item añade `correo_validado` y `estado_cuenta`. Se conserva historial APROBADA/RECHAZADA, siempre limitado al ámbito del aprobador. Aprobar actualiza la lista blanca. Importar un preaprobado cuyo usuario ya verificó y está pendiente aprueba automáticamente; no habilita cuentas que aún no verificaron correo.
 
 ### Catálogos y objetos
 
@@ -131,4 +131,12 @@ python manage.py seed_demo --con-ejemplos
 
 Pruebas con correo en memoria, PDFs temporales y una base anterior migrada en un proceso aislado. Se mantienen casos de JWT, importación, watermark, privacidad, proxy, revisión y notificaciones, adaptando el login retirado a contraseña.
 
-Demo: demo1/demo2 estudiantes IEI; demo3 estudiante AP; demo4 coordinador AP; demo5 coordinador IEI; demo6 director del área; todos en `@inacapmail.cl` como fixtures ficticios heredados. Sus cuentas existentes usan recuperación para establecer contraseña. Solo las cuentas reales nuevas respetan la regla de dominio del registro. 15 tesis: 11 publicadas, 3 en revisión, 1 rechazada. `--reset-ejemplos` reemplaza las tesis «Demo » y sus PDFs; no usar en producción sin revisar los datos que se van a eliminar.
+Demo: demo1/demo2 estudiantes IEI; demo3 estudiante AP; demo4 coordinador AP; demo5 coordinador IEI; demo6 director del área; todos en `@inacapmail.cl` como fixtures ficticios heredados. Sus cuentas existentes ya validadas usan recuperación para establecer contraseña; los nuevos ejemplos quedan preaprobados y deben reenviar/validar el enlace antes de recuperar la contraseña. Solo las cuentas reales nuevas respetan la regla de dominio del registro. 15 tesis: 11 publicadas, 3 en revisión, 1 rechazada. `--reset-ejemplos` reemplaza las tesis «Demo » y sus PDFs; no usar en producción sin revisar los datos que se van a eliminar.
+
+## Regla de cuenta y actualización de marcas
+
+ACTIVA requiere correo validado y una SolicitudAcceso APROBADA. Ambos pasos pueden ocurrir en cualquier orden; una aprobación previa se conserva hasta que se valide el enlace. Login, refresh y cambio de contraseña usan la misma regla (`is_active`, ACTIVA y fecha de verificación), sin consultar la lista blanca para decidir la sesión. La aprobación sincroniza el registro de autorizados; desactivarlo sigue revocando las sesiones. `mantenimiento` crea los autorizados faltantes de cuentas activas y muestra el total.
+
+El admin de Django crea usuarios aprobados pero pendientes de verificación y envía un enlace; no permite activar una cuenta sin correo validado. Las nuevas cuentas de ORM/manager también parten pendientes, sin dar por verificado el correo. La migración conserva las cuentas legadas operativas con correo y aprobación registrados.
+
+Las marcas usan el área visible CropBox después de normalizar rotación, tres diagonales con relleno oscuro/contorno blanco y rótulos sobre fondo blanco semiopaco. `python manage.py regenerar_marcas` actualiza todas desde los originales; `--id N` selecciona una. Muestra progreso, continúa ante errores y comparte la regeneración segura con el admin, eliminando el archivo marcado anterior solo después del commit. Ver [DEPLOY.md](DEPLOY.md) para la actualización.

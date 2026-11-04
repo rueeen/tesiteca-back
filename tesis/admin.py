@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.utils import timezone
 from .models import Tesis, AutorTesis, MaterialAdicional, RegistroAcceso, Estado
-from .marca_agua import generar_marca_fija
+from .marca_agua import regenerar_marca
 
 
 @admin.register(Tesis)
@@ -24,10 +24,12 @@ class TesisAdmin(admin.ModelAdmin):
     @admin.action(description="Regenerar marca de agua")
     def regenerar(self, request, queryset):
         for tesis in queryset:
-            anterior = tesis.pdf_marcado.name
-            generar_marca_fija(tesis)
-            if anterior and anterior != tesis.pdf_marcado.name:
-                tesis.pdf_marcado.storage.delete(anterior)
+            try:
+                regenerar_marca(tesis)
+            except Exception:
+                self.message_user(
+                    request, f"No se pudo regenerar la tesis {tesis.pk}", level="ERROR"
+                )
 
 
 @admin.register(AutorTesis)

@@ -1,7 +1,7 @@
+from django.conf import settings
 from django.db.models.signals import post_save
 from django.dispatch import receiver
-from django.utils import timezone
-from .models import UsuarioAutorizado, Usuario, EstadoCuenta
+from .models import UsuarioAutorizado, Usuario, EstadoCuenta, SolicitudAcceso
 
 
 @receiver(post_save, sender=UsuarioAutorizado)
@@ -11,10 +11,18 @@ def sincronizar_activacion(sender, instance, **kwargs):
     usuario = Usuario.objects.filter(email=instance.email).first()
     if usuario is None:
         return
+    aprobada = SolicitudAcceso.objects.filter(
+        usuario=usuario, estado="APROBADA"
+    ).exists()
     if not instance.activo:
         usuario.cambiar_estado(EstadoCuenta.DESACTIVADA)
         revocar_sesiones(usuario)
-    elif usuario.estado_cuenta == EstadoCuenta.PENDIENTE_APROBACION:
+    elif (
+        settings.PREAPROBACION_LISTA_BLANCA
+        and not aprobada
+        and usuario.estado_cuenta
+        in (EstadoCuenta.PENDIENTE_VERIFICACION, EstadoCuenta.PENDIENTE_APROBACION)
+    ):
         aprobar_cuenta(
             usuario,
             {
@@ -23,9 +31,11 @@ def sincronizar_activacion(sender, instance, **kwargs):
                 "area": instance.area,
                 "sede": instance.sede,
             },
+            revisor=instance.lote.creado_por if instance.lote_id else None,
         )
     elif (
         usuario.estado_cuenta == EstadoCuenta.DESACTIVADA
         and usuario.email_verificado_en
+        and aprobada
     ):
         usuario.cambiar_estado(EstadoCuenta.ACTIVA)

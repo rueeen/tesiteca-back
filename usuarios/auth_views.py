@@ -37,6 +37,8 @@ from .cuentas import (
     revocar_sesiones,
     sello_verificacion,
     SAL_VERIFICACION,
+    puede_iniciar_sesion,
+    sincronizar_autorizado,
 )
 
 GENERICO_REGISTRO = (
@@ -137,10 +139,18 @@ class VerificarCorreo(Publica):
             return Response({"detail": ENLACE_INVALIDO}, status=400)
         usuario.email_verificado_en = timezone.now()
         usuario.save(update_fields=["email_verificado_en"])
-        autorizado = UsuarioAutorizado.objects.filter(
-            email=usuario.email, activo=True
-        ).first()
-        if autorizado:
+        aprobada = SolicitudAcceso.objects.filter(
+            usuario=usuario, estado="APROBADA"
+        ).exists()
+        autorizado = (
+            UsuarioAutorizado.objects.filter(email=usuario.email, activo=True).first()
+            if settings.PREAPROBACION_LISTA_BLANCA
+            else None
+        )
+        if aprobada:
+            usuario.cambiar_estado(EstadoCuenta.ACTIVA)
+            sincronizar_autorizado(usuario)
+        elif autorizado:
             aprobar_cuenta(
                 usuario,
                 {
@@ -152,7 +162,15 @@ class VerificarCorreo(Publica):
             )
         else:
             usuario.cambiar_estado(EstadoCuenta.PENDIENTE_APROBACION)
-            avisar_solicitud(usuario.solicitud)
+            solicitud, _ = SolicitudAcceso.objects.get_or_create(
+                usuario=usuario,
+                defaults={
+                    "rol_solicitado": usuario.rol,
+                    "carrera": usuario.carrera,
+                    "sede": usuario.sede,
+                },
+            )
+            avisar_solicitud(solicitud)
         return Response({"estado": usuario.estado_cuenta})
 
 
@@ -212,10 +230,7 @@ class Login(Publica):
         IntentoLogin.objects.create(
             email=email,
             ip=ip_cliente(request),
-            exitoso=correcta
-            and bool(usuario)
-            and usuario.is_active
-            and usuario.estado_cuenta == EstadoCuenta.ACTIVA,
+            exitoso=correcta and puede_iniciar_sesion(usuario),
         )
         if not usuario or not correcta:
             return Response({"detail": "Correo o contraseña incorrectos"}, status=401)
@@ -225,9 +240,16 @@ class Login(Publica):
             EstadoCuenta.RECHAZADA: "rechazada",
             EstadoCuenta.DESACTIVADA: "desactivada",
         }
-        if usuario.estado_cuenta != EstadoCuenta.ACTIVA or not usuario.is_active:
+        if not puede_iniciar_sesion(usuario):
             datos = {
-                "codigo": codigos.get(usuario.estado_cuenta, "desactivada"),
+                "codigo": codigos.get(
+                    usuario.estado_cuenta,
+                    (
+                        "correo_no_verificado"
+                        if not usuario.email_verificado_en
+                        else "desactivada"
+                    ),
+                ),
                 "detail": usuario.get_estado_cuenta_display(),
             }
             if usuario.estado_cuenta == EstadoCuenta.RECHAZADA:
@@ -329,6 +351,10 @@ class CambiarPassword(APIView):
     @transaction.atomic
     def post(self, request):
         usuario = Usuario.objects.select_for_update().get(pk=request.user.pk)
+        if not puede_iniciar_sesion(usuario):
+            return Response(
+                {"detail": "La cuenta no tiene una sesión habilitada"}, status=403
+            )
         if not isinstance(
             request.data.get("actual"), str
         ) or not usuario.check_password(request.data.get("actual", "")):

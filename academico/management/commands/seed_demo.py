@@ -118,14 +118,13 @@ class Command(BaseCommand):
             usuario, creado = Usuario.objects.update_or_create(
                 email=correo, defaults=datos
             )
-            from django.utils import timezone
-            from usuarios.models import EstadoCuenta
 
-            usuario.estado_cuenta = EstadoCuenta.ACTIVA
-            usuario.email_verificado_en = usuario.email_verificado_en or timezone.now()
             if creado:
                 usuario.set_unusable_password()
             usuario.save()
+            from usuarios.cuentas import aprobar_cuenta
+
+            aprobar_cuenta(usuario, datos, mensaje="Cuenta ficticia de demostración")
             personas.append(usuario)
 
         for i in range(15):

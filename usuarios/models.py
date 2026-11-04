@@ -24,12 +24,10 @@ class GestorUsuario(BaseUserManager):
     def create_user(self, email, password=None, **extra):
         if not email:
             raise ValueError("El email es obligatorio")
-        if extra.get("estado_cuenta", EstadoCuenta.ACTIVA) == EstadoCuenta.ACTIVA:
-            from django.utils import timezone
-
-            extra.setdefault("email_verificado_en", timezone.now())
         usuario = self.model(email=email.strip().lower(), **extra)
         usuario.set_password(password)
+        if usuario.estado_cuenta == EstadoCuenta.ACTIVA:
+            usuario.validar_activacion()
         usuario.save(using=self._db)
         return usuario
 
@@ -75,7 +73,9 @@ class Usuario(AbstractUser, DatosPersona):
     REQUIRED_FIELDS = ["nombre_completo"]
     objects = GestorUsuario()
     estado_cuenta = models.CharField(
-        max_length=30, choices=EstadoCuenta.choices, default=EstadoCuenta.ACTIVA
+        max_length=30,
+        choices=EstadoCuenta.choices,
+        default=EstadoCuenta.PENDIENTE_VERIFICACION,
     )
     email_verificado_en = models.DateTimeField(null=True, blank=True)
     ultimo_envio_verificacion = models.DateTimeField(null=True, blank=True)
@@ -95,16 +95,44 @@ class Usuario(AbstractUser, DatosPersona):
                 condition=models.Q(rol="ADMIN") | models.Q(sede__isnull=False),
                 name="sede_obligatoria_no_admin",
             ),
+            models.CheckConstraint(
+                condition=~models.Q(estado_cuenta="ACTIVA")
+                | models.Q(email_verificado_en__isnull=False),
+                name="activa_requiere_correo_validado",
+            ),
         ]
+
+    def validar_activacion(self):
+        from django.core.exceptions import ValidationError
+
+        if not self.email_verificado_en:
+            raise ValidationError(
+                {
+                    "estado_cuenta": "Valida el correo mediante el enlace antes de activar la cuenta"
+                }
+            )
+        if (
+            not self.pk
+            or not SolicitudAcceso.objects.filter(
+                usuario_id=self.pk, estado="APROBADA"
+            ).exists()
+        ):
+            raise ValidationError(
+                {"estado_cuenta": "La cuenta necesita una aprobación registrada"}
+            )
 
     def clean(self):
         super().clean()
+        if self.estado_cuenta == EstadoCuenta.ACTIVA:
+            self.validar_activacion()
         if self.rol != Rol.ADMIN and not self.sede_id:
             from django.core.exceptions import ValidationError
 
             raise ValidationError({"sede": "La sede es obligatoria para este rol"})
 
     def cambiar_estado(self, estado):
+        if estado == EstadoCuenta.ACTIVA:
+            self.validar_activacion()
         self.estado_cuenta = estado
         self.is_active = estado == EstadoCuenta.ACTIVA
         self.save(update_fields=["estado_cuenta", "is_active"])
@@ -143,7 +171,9 @@ class SolicitudAcceso(models.Model):
     carrera = models.ForeignKey(
         "academico.Carrera", on_delete=models.PROTECT, null=True, blank=True
     )
-    sede = models.ForeignKey("academico.Sede", on_delete=models.PROTECT)
+    sede = models.ForeignKey(
+        "academico.Sede", on_delete=models.PROTECT, null=True, blank=True
+    )
     mensaje = models.CharField(max_length=500, blank=True)
     estado = models.CharField(
         max_length=15,
