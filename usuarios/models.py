@@ -16,6 +16,7 @@ class EstadoCuenta(models.TextChoices):
     ACTIVA = "ACTIVA", "Activa"
     RECHAZADA = "RECHAZADA", "Rechazada"
     DESACTIVADA = "DESACTIVADA", "Desactivada"
+    ELIMINADA = "ELIMINADA", "Eliminada"
 
 
 class GestorUsuario(BaseUserManager):
@@ -77,6 +78,8 @@ class Usuario(AbstractUser, DatosPersona):
         choices=EstadoCuenta.choices,
         default=EstadoCuenta.PENDIENTE_VERIFICACION,
     )
+    politica_aceptada_version = models.CharField(max_length=50, null=True, blank=True)
+    politica_aceptada_en = models.DateTimeField(null=True, blank=True)
     email_verificado_en = models.DateTimeField(null=True, blank=True)
     ultimo_envio_verificacion = models.DateTimeField(null=True, blank=True)
     contador_envios_verificacion = models.PositiveSmallIntegerField(default=0)
@@ -92,7 +95,9 @@ class Usuario(AbstractUser, DatosPersona):
                 name="rut_usuario_unico_no_vacio",
             ),
             models.CheckConstraint(
-                condition=models.Q(rol="ADMIN") | models.Q(sede__isnull=False),
+                condition=models.Q(rol="ADMIN")
+                | models.Q(estado_cuenta="ELIMINADA")
+                | models.Q(sede__isnull=False),
                 name="sede_obligatoria_no_admin",
             ),
             models.CheckConstraint(

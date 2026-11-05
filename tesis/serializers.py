@@ -251,6 +251,8 @@ class AutoresJSON(serializers.Field):
 
 
 class TesisEscrituraSerializer(serializers.ModelSerializer):
+    autoriza_publicacion = serializers.BooleanField(required=False)
+
     tipo = serializers.ChoiceField(
         choices=TipoTrabajo.choices,
         error_messages={
@@ -288,9 +290,26 @@ class TesisEscrituraSerializer(serializers.ModelSerializer):
             "autores",
             "repositorio_url",
             "publicar",
+            "autoriza_publicacion",
         ]
 
     def validate(self, datos):
+        if not self.instance and datos.get("autoriza_publicacion") is not True:
+            raise serializers.ValidationError(
+                {"autoriza_publicacion": "Debes autorizar la publicación del trabajo"}
+            )
+        if (
+            "autoriza_publicacion" in datos
+            and datos["autoriza_publicacion"] is not True
+        ):
+            raise serializers.ValidationError(
+                {"autoriza_publicacion": "Debes autorizar la publicación del trabajo"}
+            )
+        if not self.instance:
+            datos["autorizacion_version"] = settings.AUTORIZACION_PUBLICACION_VERSION
+            from django.utils import timezone
+
+            datos["autorizacion_en"] = timezone.now()
         usuario = self.context["request"].user
         carrera = datos.get("carrera", getattr(self.instance, "carrera", None))
         if "sede" not in datos:

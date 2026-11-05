@@ -1,3 +1,10 @@
+from privacidad.views import (
+    AceptarPolitica,
+    MisDatos,
+    Perfil,
+    Eliminar,
+    AnonimizarAdmin,
+)
 from django.contrib import admin
 from django.urls import path, include
 from .views import Salud
@@ -41,6 +48,11 @@ router.register("tesis", TesisViewSet, basename="tesis")
 router.register("materiales", MaterialViewSet, basename="materiales")
 router.register("admin/autorizados", AutorizadosViewSet, basename="autorizados")
 urlpatterns = [
+    path("api/cuenta/aceptar-politica/", AceptarPolitica.as_view()),
+    path("api/cuenta/mis-datos/", MisDatos.as_view()),
+    path("api/cuenta/perfil/", Perfil.as_view()),
+    path("api/cuenta/eliminar/", Eliminar.as_view()),
+    path("api/admin/usuarios/<int:pk>/anonimizar/", AnonimizarAdmin.as_view()),
     path("api/admin/funcionarios/", Funcionarios.as_view()),
     path("api/auth/registro/", Registro.as_view()),
     path("api/auth/verificar-correo/", VerificarCorreo.as_view()),

@@ -59,6 +59,20 @@ class SolicitudesViewSet(viewsets.GenericViewSet):
         pagina = self.paginate_queryset(self.filter_queryset(self.get_queryset()))
         return self.get_paginated_response(self.get_serializer(pagina, many=True).data)
 
+    def retrieve(self, request, pk=None):
+        solicitud = self.get_object()
+        from privacidad.models import EventoPrivacidad
+
+        EventoPrivacidad.objects.create(
+            tipo="ver_rut",
+            usuario_id_original=solicitud.usuario_id,
+            motivo="verificacion_identidad",
+            ejecutado_por=request.user,
+        )
+        respuesta = Response(self.get_serializer(solicitud).data)
+        respuesta["Cache-Control"] = "no-store"
+        return respuesta
+
     @action(detail=False, methods=["get"])
     def resumen(self, request):
         return Response(

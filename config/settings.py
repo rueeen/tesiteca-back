@@ -22,6 +22,7 @@ INSTALLED_APPS = [
     "academico",
     "usuarios",
     "tesis",
+    "privacidad",
 ]
 MIDDLEWARE = [
     "config.middleware.ProxyNetlifyMiddleware",
@@ -193,3 +194,17 @@ VISIBILIDAD_ENTRE_SEDES = config("VISIBILIDAD_ENTRE_SEDES", default=True, cast=b
 PREAPROBACION_LISTA_BLANCA = config(
     "PREAPROBACION_LISTA_BLANCA", default=True, cast=bool
 )
+
+# Versiones de textos aprobados por INACAP y plazos de minimización.
+POLITICA_PRIVACIDAD_VERSION = config("POLITICA_PRIVACIDAD_VERSION", default="2026-11")
+AUTORIZACION_PUBLICACION_VERSION = config(
+    "AUTORIZACION_PUBLICACION_VERSION", default="2026-11"
+)
+RETENCION_LECTURAS_DIAS = config("RETENCION_LECTURAS_DIAS", default=365, cast=int)
+RETENCION_SOLICITUDES_RECHAZADAS_DIAS = config(
+    "RETENCION_SOLICITUDES_RECHAZADAS_DIAS", default=180, cast=int
+)
+RETENCION_CUENTAS_INACTIVAS_DIAS = config(
+    "RETENCION_CUENTAS_INACTIVAS_DIAS", default=0, cast=int
+)
+CONTACTO_PRIVACIDAD = config("CONTACTO_PRIVACIDAD", default="")

@@ -85,6 +85,7 @@ class CuentasTests(APITestCase):
             "rut": "12.345.678-5",
             "password": PASS,
             "password2": PASS,
+            "acepta_politica": True,
             "carrera": self.carrera.pk,
             "sede": self.sede.pk,
             **extra,

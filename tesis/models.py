@@ -16,6 +16,10 @@ class TipoTrabajo(models.TextChoices):
 
 
 class Tesis(models.Model):
+    autoriza_publicacion = models.BooleanField(default=False)
+    autorizacion_version = models.CharField(max_length=50, blank=True)
+    autorizacion_en = models.DateTimeField(null=True, blank=True)
+    publicada_alguna_vez = models.BooleanField(default=False, editable=False)
     titulo = models.CharField(max_length=300)
     resumen = models.TextField()
     palabras_clave = models.CharField(max_length=500, blank=True)
@@ -50,6 +54,15 @@ class Tesis(models.Model):
     texto_extraido = models.TextField(blank=True)
     creado = models.DateTimeField(auto_now_add=True)
     actualizado = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        if self.estado == Estado.PUBLICADA or self.fecha_publicacion:
+            self.publicada_alguna_vez = True
+            if kwargs.get("update_fields") is not None:
+                kwargs["update_fields"] = set(kwargs["update_fields"]) | {
+                    "publicada_alguna_vez"
+                }
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.titulo
@@ -86,7 +99,9 @@ class MaterialAdicional(models.Model):
 
 
 class RegistroAcceso(models.Model):
-    usuario = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    usuario = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True
+    )
     tesis = models.ForeignKey(Tesis, on_delete=models.SET_NULL, null=True)
     accion = models.CharField(
         max_length=30,
@@ -95,3 +110,9 @@ class RegistroAcceso(models.Model):
     ip = models.GenericIPAddressField(null=True, blank=True)
     user_agent = models.CharField(max_length=500, blank=True)
     fecha = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args, **kwargs):
+        from privacidad.utils import truncar_ip
+
+        self.ip = truncar_ip(self.ip) or None
+        super().save(*args, **kwargs)

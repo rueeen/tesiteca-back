@@ -75,6 +75,9 @@ class Registro(Publica):
         ):
             return Response({"detail": GENERICO_REGISTRO}, status=201)
         if usuario and usuario.estado_cuenta == EstadoCuenta.PENDIENTE_VERIFICACION:
+            from privacidad.servicios import aceptar_politica
+
+            aceptar_politica(usuario)
             enviar_verificacion(usuario)
             return Response({"detail": GENERICO_REGISTRO}, status=201)
         rechazada = usuario is not None
@@ -93,6 +96,9 @@ class Registro(Publica):
                 usuario.save()
         except IntegrityError:
             raise ValidationError({"rut": "El correo o RUT ya está registrado"})
+        from privacidad.servicios import aceptar_politica
+
+        aceptar_politica(usuario)
         solicitud, _ = SolicitudAcceso.objects.update_or_create(
             usuario=usuario,
             defaults={

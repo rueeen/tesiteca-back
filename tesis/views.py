@@ -1,3 +1,4 @@
+from privacidad.utils import truncar_ip, familia_user_agent
 import ipaddress
 from pathlib import Path
 from rest_framework.permissions import IsAuthenticated
@@ -39,8 +40,8 @@ def registrar(request, tesis, accion):
         usuario=request.user,
         tesis=tesis,
         accion=accion,
-        ip=ip_cliente(request),
-        user_agent=request.META.get("HTTP_USER_AGENT", "")[:500],
+        ip=truncar_ip(ip_cliente(request)) or None,
+        user_agent=familia_user_agent(request.META.get("HTTP_USER_AGENT", "")),
     )
 
 

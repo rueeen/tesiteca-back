@@ -98,3 +98,5 @@ class Command(BaseCommand):
                     "AVISO: supera 400 MiB; la cuota total de la cuenta es 512 MiB"
                 )
             )
+
+        call_command("anonimizar", stdout=self.stdout)

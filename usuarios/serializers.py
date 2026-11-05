@@ -25,6 +25,14 @@ class UsuarioMiniSerializer(serializers.ModelSerializer):
 
 
 class UsuarioSerializer(serializers.ModelSerializer):
+    debe_aceptar_politica = serializers.SerializerMethodField()
+
+    def get_debe_aceptar_politica(self, obj):
+        return (
+            obj.estado_cuenta == "ACTIVA"
+            and obj.politica_aceptada_version != settings.POLITICA_PRIVACIDAD_VERSION
+        )
+
     carrera = CarreraMiniSerializer(read_only=True)
     area = MiniSerializer(read_only=True)
     sede = SedeMiniSerializer(read_only=True)
@@ -38,6 +46,9 @@ class UsuarioSerializer(serializers.ModelSerializer):
             "nombre_completo",
             "rol",
             "estado_cuenta",
+            "politica_aceptada_version",
+            "politica_aceptada_en",
+            "debe_aceptar_politica",
             "carrera",
             "area",
             "sede",
@@ -85,6 +96,11 @@ class AutorizadoSerializer(serializers.ModelSerializer):
         ]:
             valor = getattr(instancia, campo)
             datos[campo] = serializador(valor).data if valor is not None else None
+        request = self.context.get("request")
+        if request and request.user.rol != Rol.ADMIN:
+            from privacidad.utils import enmascarar_rut
+
+            datos["rut"] = enmascarar_rut(datos["rut"])
         return datos
 
     def validate_email(self, value):
@@ -136,6 +152,20 @@ from .validacion import normalizar_rut
 
 
 class RegistroSerializer(CorreoSerializer):
+    acepta_politica = serializers.BooleanField(
+        required=True,
+        write_only=True,
+        error_messages={
+            "required": "Debes aceptar la política de privacidad",
+            "invalid": "Debes aceptar la política de privacidad",
+        },
+    )
+
+    def validate_acepta_politica(self, valor):
+        if not valor:
+            raise serializers.ValidationError("Debes aceptar la política de privacidad")
+        return valor
+
     password = serializers.CharField(write_only=True, trim_whitespace=False)
     password2 = serializers.CharField(write_only=True, trim_whitespace=False)
     nombre_completo = serializers.CharField(max_length=200)
@@ -215,6 +245,20 @@ class RegistroSerializer(CorreoSerializer):
 
 
 class SolicitanteSerializer(UsuarioMiniSerializer):
+    def to_representation(self, instancia):
+        datos = super().to_representation(instancia)
+        request = self.context.get("request")
+        view = self.context.get("view")
+        if (
+            request
+            and request.user.rol != Rol.ADMIN
+            and getattr(view, "action", None) != "retrieve"
+        ):
+            from privacidad.utils import enmascarar_rut
+
+            datos["rut"] = enmascarar_rut(datos["rut"])
+        return datos
+
     class Meta(UsuarioMiniSerializer.Meta):
         fields = ["id", "email", "nombre_completo", "rut"]
 

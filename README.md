@@ -174,3 +174,48 @@ ACTIVA requiere correo validado y una SolicitudAcceso APROBADA. Ambos pasos pued
 El admin de Django crea usuarios aprobados pero pendientes de verificación y envía un enlace; no permite activar una cuenta sin correo validado. Las nuevas cuentas de ORM/manager también parten pendientes, sin dar por verificado el correo. La migración conserva las cuentas legadas operativas con correo y aprobación registrados.
 
 Las marcas usan el área visible CropBox después de normalizar rotación, tres diagonales con relleno oscuro/contorno blanco y rótulos sobre fondo blanco semiopaco. `python manage.py regenerar_marcas` actualiza todas desde los originales; `--id N` selecciona una. Muestra progreso, continúa ante errores y comparte la regeneración segura con el admin, eliminando el archivo marcado anterior solo después del commit. Ver [DEPLOY.md](DEPLOY.md) para la actualización.
+
+## Privacidad y protección de datos
+
+Tesiteca trata nombre, RUT, correo, carrera, sede, credenciales protegidas por hash, autorías, solicitudes, notificaciones e historial de lecturas. El responsable, las finalidades y bases de licitud, el contacto y los textos legales los define y valida **INACAP**. El código registra versiones y aceptaciones; no sustituye esa validación. Configurar `CONTACTO_PRIVACIDAD` con el correo institucional que recibirá solicitudes de acceso, rectificación, supresión, oposición y portabilidad. La oposición se recibe por ese canal y se atiende mediante el procedimiento institucional; no tiene un endpoint específico.
+
+### Consentimiento y contrato de la API
+
+- `GET /api/salud/` incluye `politica_privacidad_version` (`POLITICA_PRIVACIDAD_VERSION`, por defecto `2026-11`).
+- `POST /api/auth/registro/` requiere `acepta_politica: true`; si falta o es falso responde 400: «Debes aceptar la política de privacidad». Guarda versión y fecha, junto con un historial de aceptaciones. No se inventan aceptaciones para cuentas existentes.
+- `GET /api/auth/me/` incluye `politica_aceptada_version`, `politica_aceptada_en` y `debe_aceptar_politica`. Este último es verdadero para una cuenta ACTIVA cuya versión difiere de la vigente. El login sigue permitido: el frontend debe mostrar el aviso obligatorio y el texto vigente.
+- `POST /api/cuenta/aceptar-politica/` (autenticado) registra la versión vigente y la fecha; responde 200 con el perfil. Cada aceptación queda en el historial.
+- `POST /api/tesis/` requiere `autoriza_publicacion=true`, también en multipart, y registra `AUTORIZACION_PUBLICACION_VERSION` (por defecto `2026-11`) y fecha. Sin autorización responde 400. El cliente no puede establecer la versión ni la fecha.
+- La migración marca las tesis existentes con autorización verdadera y versión **`legado`**, sin inventar una fecha de consentimiento. Es una medida de compatibilidad de datos, no evidencia de un consentimiento nuevo. Las tesis demo usan versión `demo`.
+- `GET /api/cuenta/mis-datos/`: JSON descargable `mis-datos-tesiteca.json`, sin caché, hasta **5 solicitudes por hora por usuario**. Incluye perfil sin hash, aceptaciones, solicitudes, tesis subidas, autorías, historial propio de lecturas y notificaciones propias. No exporta PDFs ni historiales ajenos.
+- `PATCH /api/cuenta/perfil/` acepta exclusivamente `nombre_completo`. RUT, carrera y sede los rectifica un administrador.
+- `POST /api/cuenta/eliminar/` exige `{password, confirmacion: "ELIMINAR"}`. Contraseña incorrecta: 400; supresión completada: 204 y cookie de sesión borrada. El último ADMIN activo obtiene 409.
+- `POST /api/admin/usuarios/{id}/anonimizar/` es exclusivo de ADMIN y recibe `{motivo}`. Motivos admitidos: `solicitud_titular`, `solicitud_administrativa` o `retencion`. Son códigos cerrados para impedir que el registro de auditoría guarde datos personales en texto libre.
+- Listados de `/api/admin/autorizados/` y `/api/solicitudes/`: RUT enmascarado para COORDINADOR y DIRECTOR; ADMIN lo ve completo. `GET /api/solicitudes/{id}/` muestra el RUT completo únicamente dentro del ámbito de aprobación existente (rol, sede, carrera/área), y registra un evento `ver_rut` sin almacenar el RUT. Las columnas de RUT en listados del admin de Django se enmascaran.
+
+### Minimización, retención y anonimización
+
+El historial de accesos guarda IPv4 truncada a /24 e IPv6 a /48. La IP completa del lector se utiliza en memoria para generar la marca de agua del PDF, sin guardarla en `RegistroAcceso` ni conservar una copia del PDF personalizado en el servidor. El agente del navegador se reduce a familia y sistema (por ejemplo, `Chrome / Windows`). La migración también trunca las IP históricas y vacía sus agentes completos. El historial de intentos de login es un registro de seguridad separado: `mantenimiento` elimina los de más de 30 días.
+
+Los plazos son configurables en `.env`:
+
+| Variable | Valor inicial | Efecto |
+| --- | --- | --- |
+| `RETENCION_LECTURAS_DIAS` | 365 | Desvincula usuario y vacía agente en lecturas antiguas; conserva tesis, acción, fecha e IP truncada para estadísticas. |
+| `RETENCION_SOLICITUDES_RECHAZADAS_DIAS` | 180 | Anonimiza cuentas RECHAZADA tras ese plazo desde la revisión de la solicitud. |
+| `RETENCION_CUENTAS_INACTIVAS_DIAS` | 0 | Desactivado por defecto. Si se activa, anonimiza cuentas ACTIVA con último login anterior al plazo; excluye ADMIN y cuentas sin último login. |
+
+Cero desactiva una categoría; los valores negativos se rechazan. Ejecutar primero una simulación:
+
+```bash
+python manage.py anonimizar --dry-run
+python manage.py anonimizar
+```
+
+La simulación solo cuenta, no modifica la base ni los archivos. `mantenimiento` ejecuta la retención al final; programar ese comando con la periodicidad institucional (por ejemplo, diariamente para respetar los plazos). Los números informados son registros/cuentas afectados, no cantidad de archivos.
+
+La anonimización es **irreversible**: sustituye la identidad por `anonimo-<id>@anonimo.invalid` / «Usuario eliminado», vacía RUT y datos personales del perfil, inutiliza la contraseña, elimina permisos, aceptaciones, notificaciones, tickets, autorizaciones por correo e intentos de login asociados y revoca todos los refresh tokens registrados. La cuenta queda ELIMINADA e inactiva; los access tokens dejan de autenticarla. Las solicitudes conservan estado y fechas, con sus textos y datos de asignación vacíos. El evento de auditoría conserva únicamente tipo, fecha, identificador numérico original, código de motivo e identificador del ejecutor.
+
+Las tesis publicadas y su **autoría académica nominal** se conservan: el autor queda sin vínculo a la cuenta y sin correo, pero mantiene su nombre. Esto debe explicarse en la política que valide INACAP. Se conservan también tesis que fueron publicadas y luego volvieron a revisión; una marca interna registra esa circunstancia. En la migración se utiliza la publicación actual, su fecha o una notificación histórica de aprobación como evidencia. Se eliminan las tesis no publicadas del usuario en BORRADOR, EN_REVISION o RECHAZADA y sus PDFs/materiales; los archivos se borran después de confirmar la transacción. Los accesos se desvinculan del usuario para mantener estadísticas sin identidad directa. Nunca se anonimiza al último ADMIN activo.
+
+Para desplegar: respaldar la base y los archivos, ejecutar `python manage.py migrate`, configurar las versiones y el contacto, y recargar el servicio. Las migraciones no ejecutan la retención ni eliminan tesis publicadas. La conservación de copias de respaldo, archivos de importación y logs externos debe formar parte del procedimiento institucional; no se altera mediante la API de supresión.

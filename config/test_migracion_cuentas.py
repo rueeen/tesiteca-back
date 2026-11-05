@@ -202,3 +202,52 @@ assert set(Anterior.objects.values_list('tipo',flat=True))=={'PROYECTO_TITULO'}
                 timeout=60,
             )
         self.assertEqual(resultado.returncode, 0, resultado.stderr)
+
+    def test_privacidad_migra_ips_y_autorizacion_sin_perder_publicadas(self):
+        codigo = """
+import os
+import django
+django.setup()
+from django.db import connection
+from django.db.migrations.executor import MigrationExecutor
+connection.settings_dict['NAME']=os.environ['PRUEBA_MIGRACION_DB']
+ejecutor=MigrationExecutor(connection)
+previas=[('tesis','0008_alter_tesis_tipo'),('usuarios','0004_alter_solicitudacceso_sede_and_more'),('notificaciones','0001_initial')]
+ejecutor.migrate(previas)
+apps=ejecutor.loader.project_state(previas).apps
+sede=apps.get_model('academico','Sede').objects.create(nombre='Arica',ciudad='Arica')
+area=apps.get_model('academico','Area').objects.create(nombre='Informática')
+carrera=apps.get_model('academico','Carrera').objects.create(nombre='Ingeniería',codigo='IEI',area=area)
+u=apps.get_model('usuarios','Usuario').objects.create(email='privacidad-migracion@inacap.cl',nombre_completo='Autor histórico',rol='ADMIN')
+Tesis=apps.get_model('tesis','Tesis')
+for i,estado in enumerate(['PUBLICADA','EN_REVISION']):
+    t=Tesis.objects.create(titulo=f'Conservada {i}',resumen='Resumen',tipo='PROYECTO_TITULO',estado=estado,anio=2026,carrera=carrera,sede=sede,subido_por=u,profesor_guia='Guía',pdf_original=f'original-{i}.pdf',pdf_marcado=f'marcado-{i}.pdf',hash_sha256=f'{i:064x}')
+    apps.get_model('tesis','AutorTesis').objects.create(tesis=t,usuario=u,nombre_completo='Autor histórico',email=u.email)
+    apps.get_model('tesis','RegistroAcceso').objects.create(tesis=t,usuario=u,accion='VER_PDF',ip=['200.1.2.99','2001:db8:abcd:1234::1'][i],user_agent='Agente completo histórico')
+apps.get_model('notificaciones','Notificacion').objects.create(usuario=u,tipo='TESIS_APROBADA',titulo='Aprobada antes',mensaje='',enlace='/',datos={'tesis_id':t.pk})
+ejecutor=MigrationExecutor(connection)
+ejecutor.migrate(ejecutor.loader.graph.leaf_nodes())
+from tesis.models import Tesis, AutorTesis, RegistroAcceso
+from usuarios.models import Usuario
+assert Tesis.objects.count()==2
+assert Tesis.objects.filter(autoriza_publicacion=True,autorizacion_version='legado',publicada_alguna_vez=True).count()==2
+assert set(RegistroAcceso.objects.values_list('ip',flat=True))=={'200.1.2.0','2001:db8:abcd::'}
+assert not RegistroAcceso.objects.exclude(user_agent='').exists()
+assert AutorTesis.objects.filter(nombre_completo='Autor histórico',email=u.email).count()==2
+assert set(Tesis.objects.values_list('pdf_original',flat=True))=={'original-0.pdf','original-1.pdf'}
+assert Usuario.objects.get(pk=u.pk).politica_aceptada_en is None
+"""
+        with tempfile.TemporaryDirectory() as carpeta:
+            resultado = subprocess.run(
+                [sys.executable, "-c", codigo],
+                cwd=settings.BASE_DIR,
+                env={
+                    **os.environ,
+                    "DJANGO_SETTINGS_MODULE": "config.settings",
+                    "PRUEBA_MIGRACION_DB": str(Path(carpeta) / "privacidad.sqlite3"),
+                },
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        self.assertEqual(resultado.returncode, 0, resultado.stderr)

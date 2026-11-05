@@ -4,8 +4,16 @@ from .forms import CrearUsuarioForm, EditarUsuarioForm
 from .models import Usuario, UsuarioAutorizado, ImportacionLote
 
 
+class RutEnmascarado:
+    @admin.display(description="RUT")
+    def rut_enmascarado(self, obj):
+        from privacidad.utils import enmascarar_rut
+
+        return enmascarar_rut(obj.rut)
+
+
 @admin.register(Usuario)
-class UsuarioAdmin(UserAdmin):
+class UsuarioAdmin(RutEnmascarado, UserAdmin):
     readonly_fields = ["email_verificado_en", "is_active"]
 
     def save_model(self, request, obj, form, change):
@@ -33,7 +41,14 @@ class UsuarioAdmin(UserAdmin):
     add_form = CrearUsuarioForm
     form = EditarUsuarioForm
     ordering = ["email"]
-    list_display = ["email", "nombre_completo", "rol", "carrera", "is_active"]
+    list_display = [
+        "email",
+        "nombre_completo",
+        "rut_enmascarado",
+        "rol",
+        "carrera",
+        "is_active",
+    ]
     list_filter = ["rol", "carrera", "is_active"]
     search_fields = ["email", "nombre_completo", "rut"]
     fieldsets = (
@@ -86,8 +101,15 @@ class UsuarioAdmin(UserAdmin):
 
 
 @admin.register(UsuarioAutorizado)
-class AutorizadoAdmin(admin.ModelAdmin):
-    list_display = ["email", "nombre_completo", "rol", "carrera", "activo"]
+class AutorizadoAdmin(RutEnmascarado, admin.ModelAdmin):
+    list_display = [
+        "email",
+        "nombre_completo",
+        "rut_enmascarado",
+        "rol",
+        "carrera",
+        "activo",
+    ]
     list_filter = ["rol", "carrera", "activo"]
     search_fields = ["email", "nombre_completo", "rut"]
 
@@ -109,5 +131,16 @@ class LoteAdmin(admin.ModelAdmin):
 
 from .models import SolicitudAcceso, IntentoLogin
 
-admin.site.register(SolicitudAcceso)
+
+@admin.register(SolicitudAcceso)
+class SolicitudAdmin(admin.ModelAdmin):
+    list_display = ["id", "estado", "rut_enmascarado", "creada"]
+
+    @admin.display(description="RUT")
+    def rut_enmascarado(self, obj):
+        from privacidad.utils import enmascarar_rut
+
+        return enmascarar_rut(obj.usuario.rut)
+
+
 admin.site.register(IntentoLogin)
