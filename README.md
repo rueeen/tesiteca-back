@@ -132,7 +132,7 @@ Respuesta 201: `{autorizado, cuenta: {existe:true, estado_cuenta} | null, siguie
 
 ### Listado y edición de autorizados
 
-`GET /api/admin/autorizados/?tipo=estudiantes|funcionarios` filtra los registros; cada item añade `estado_cuenta` (null si no hay cuenta). Se conservan búsqueda y filtros por rol, carrera y activo. Los funcionarios de este filtro son coordinadores y directores.
+`GET /api/admin/autorizados/?tipo=estudiantes|funcionarios` filtra los registros; cada item incluye `estado_cuenta` y `usuario_id` (entero; ambos son `null` si no hay cuenta asociada por correo, sin distinguir mayúsculas). `usuario_id` también se incluye en las respuestas de PATCH y en `autorizado` de POST `/api/admin/funcionarios/`. Para anonimizar, usar ese identificador en `POST /api/admin/usuarios/{usuario_id}/anonimizar/` con `motivo`: `solicitud_titular`, `solicitud_administrativa` o `retencion` (solo ADMIN). Se conservan búsqueda y filtros por rol, carrera y activo. Los funcionarios de este filtro son coordinadores y directores.
 
 `PATCH /api/admin/autorizados/{id}/`: solo ADMIN cambia rol y datos personales. El resto solo activa/desactiva en su ámbito; DIRECTOR también puede cambiar la carrera de un coordinador a otra de su área, manteniendo sede. Para pasar de ESTUDIANTE a un rol de funcionario el correo debe ser `@inacap.cl`. Desactivar revoca sesiones; reactivar no recupera refresh revocados. Los cambios de metadata se reflejan en las cuentas existentes y sus aprobaciones.
 

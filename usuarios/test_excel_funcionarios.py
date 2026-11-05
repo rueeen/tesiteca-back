@@ -490,3 +490,151 @@ class ExcelFuncionariosTests(APITestCase):
         self.assertEqual(r.status_code, 200, r.data)
         u.refresh_from_db()
         self.assertEqual(u.area, self.area)
+
+    def test_usuario_id_en_ambas_pestanas_con_y_sin_cuenta(self):
+        for tipo, rol, dominio in [
+            ("estudiantes", Rol.ESTUDIANTE, "inacapmail.cl"),
+            ("funcionarios", Rol.COORDINADOR, "inacap.cl"),
+        ]:
+            with self.subTest(tipo=tipo):
+                cuenta = Usuario.objects.create_user(
+                    f"con-cuenta-{tipo}@{dominio}",
+                    nombre_completo="Con cuenta",
+                    rol=rol,
+                    carrera=self.carrera,
+                    sede=self.sede,
+                )
+                # La asociación por correo debe tolerar datos históricos con mayúsculas.
+                Usuario.objects.filter(pk=cuenta.pk).update(email=cuenta.email.upper())
+                con_cuenta = UsuarioAutorizado.objects.create(
+                    email=cuenta.email,
+                    nombre_completo="Con cuenta",
+                    rol=rol,
+                    carrera=self.carrera,
+                    sede=self.sede,
+                )
+                sin_cuenta = UsuarioAutorizado.objects.create(
+                    email=f"sin-cuenta-{tipo}@{dominio}",
+                    nombre_completo="Sin cuenta",
+                    rol=rol,
+                    carrera=self.carrera,
+                    sede=self.sede,
+                )
+                respuesta = self.client.get("/api/admin/autorizados/", {"tipo": tipo})
+                self.assertEqual(respuesta.status_code, 200)
+                filas = {fila["id"]: fila for fila in respuesta.data["results"]}
+                self.assertEqual(filas[con_cuenta.pk]["usuario_id"], cuenta.pk)
+                self.assertIsNone(filas[sin_cuenta.pk]["usuario_id"])
+                self.assertIn("estado_cuenta", filas[sin_cuenta.pk])
+                self.assertIsNone(filas[sin_cuenta.pk]["estado_cuenta"])
+
+    def test_consultas_listado_constantes_con_dos_y_diez_autorizados(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        for tipo, rol, dominio in [
+            ("estudiantes", Rol.ESTUDIANTE, "inacapmail.cl"),
+            ("funcionarios", Rol.COORDINADOR, "inacap.cl"),
+        ]:
+            with self.subTest(tipo=tipo):
+
+                def crear(numero):
+                    email = f"consultas-{tipo}-{numero}@{dominio}"
+                    if numero % 2 == 0:
+                        Usuario.objects.create_user(
+                            email,
+                            nombre_completo="Con cuenta",
+                            rol=rol,
+                            carrera=self.carrera,
+                            sede=self.sede,
+                        )
+                    UsuarioAutorizado.objects.create(
+                        email=email,
+                        nombre_completo="Autorizado",
+                        rol=rol,
+                        carrera=self.carrera,
+                        sede=self.sede,
+                    )
+
+                for numero in range(2):
+                    crear(numero)
+                with CaptureQueriesContext(connection) as consultas:
+                    respuesta = self.client.get(
+                        "/api/admin/autorizados/", {"tipo": tipo}
+                    )
+                self.assertEqual(respuesta.status_code, 200)
+                self.assertEqual(len(respuesta.data["results"]), 2)
+                cantidad = len(consultas)
+                with self.assertNumQueries(cantidad):
+                    self.client.get("/api/admin/autorizados/", {"tipo": tipo})
+                for numero in range(2, 10):
+                    crear(numero)
+                with self.assertNumQueries(cantidad):
+                    respuesta = self.client.get(
+                        "/api/admin/autorizados/", {"tipo": tipo}
+                    )
+                self.assertEqual(respuesta.status_code, 200)
+                self.assertEqual(len(respuesta.data["results"]), 10)
+                for fila in respuesta.data["results"]:
+                    self.assertIn("usuario_id", fila)
+
+    def test_usuario_id_en_patch_y_post_funcionarios_y_solo_lectura(self):
+        autorizado = UsuarioAutorizado.objects.create(
+            email=self.coord.email,
+            nombre_completo="Coordinador",
+            rol=Rol.COORDINADOR,
+            carrera=self.carrera,
+            sede=self.sede,
+        )
+        r = self.client.patch(
+            f"/api/admin/autorizados/{autorizado.pk}/",
+            {"nombre_completo": "Coordinador actualizado", "usuario_id": self.admin.pk},
+        )
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["usuario_id"], self.coord.pk)
+        # Al cambiar el correo la anotación original ya no representa a la cuenta.
+        r = self.client.patch(
+            f"/api/admin/autorizados/{autorizado.pk}/",
+            {"email": "sin-cuenta-patch@inacap.cl"},
+        )
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertIsNone(r.data["usuario_id"])
+        self.assertIsNone(r.data["estado_cuenta"])
+        for email, esperado in [
+            (self.coord.email, self.coord.pk),
+            ("nuevo-funcionario-id@inacap.cl", None),
+        ]:
+            with self.subTest(email=email):
+                r = self.client.post(
+                    "/api/admin/funcionarios/",
+                    {
+                        "email": email,
+                        "nombre_completo": "Funcionario",
+                        "rol": Rol.COORDINADOR,
+                        "carrera": self.carrera.pk,
+                        "sede": self.sede.pk,
+                    },
+                )
+                self.assertEqual(r.status_code, 201, r.data)
+                self.assertEqual(r.data["autorizado"]["usuario_id"], esperado)
+
+    def test_usuario_id_listado_permite_anonimizar_y_retira_autorizado(self):
+        autorizado = UsuarioAutorizado.objects.create(
+            email=self.coord.email,
+            nombre_completo="Coordinador",
+            rol=Rol.COORDINADOR,
+            carrera=self.carrera,
+            sede=self.sede,
+        )
+        r = self.client.get("/api/admin/autorizados/", {"tipo": "funcionarios"})
+        fila = next(f for f in r.data["results"] if f["id"] == autorizado.pk)
+        self.assertEqual(fila["usuario_id"], self.coord.pk)
+        r = self.client.post(
+            f'/api/admin/usuarios/{fila["usuario_id"]}/anonimizar/',
+            {"motivo": "solicitud_administrativa"},
+        )
+        self.assertEqual(r.status_code, 204)
+        self.coord.refresh_from_db()
+        self.assertEqual(self.coord.estado_cuenta, EstadoCuenta.ELIMINADA)
+        r = self.client.get("/api/admin/autorizados/", {"tipo": "funcionarios"})
+        self.assertNotIn(autorizado.pk, [f["id"] for f in r.data["results"]])

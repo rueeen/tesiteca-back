@@ -56,6 +56,7 @@ class UsuarioSerializer(serializers.ModelSerializer):
 
 
 class AutorizadoSerializer(serializers.ModelSerializer):
+    usuario_id = serializers.IntegerField(read_only=True, allow_null=True)
     estado_cuenta = serializers.CharField(read_only=True, allow_null=True)
 
     def validate_rut(self, valor):
@@ -79,16 +80,21 @@ class AutorizadoSerializer(serializers.ModelSerializer):
             "sede",
             "activo",
             "estado_cuenta",
+            "usuario_id",
         ]
 
     def to_representation(self, instancia):
         datos = super().to_representation(instancia)
-        if not hasattr(instancia, "estado_cuenta"):
-            datos["estado_cuenta"] = (
-                Usuario.objects.filter(email=instancia.email)
-                .values_list("estado_cuenta", flat=True)
+        if not hasattr(instancia, "estado_cuenta") or not hasattr(
+            instancia, "usuario_id"
+        ):
+            cuenta = (
+                Usuario.objects.filter(email__iexact=instancia.email)
+                .values("id", "estado_cuenta")
                 .first()
             )
+            datos["estado_cuenta"] = cuenta["estado_cuenta"] if cuenta else None
+            datos["usuario_id"] = cuenta["id"] if cuenta else None
         for campo, serializador in [
             ("carrera", CarreraMiniSerializer),
             ("area", MiniSerializer),
