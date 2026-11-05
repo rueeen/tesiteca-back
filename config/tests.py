@@ -166,6 +166,7 @@ class ProxyTests(APITestCase):
                 "notificaciones_ws",
                 "correo",
                 "base_datos",
+                "politica_privacidad_version",
             },
         )
         self.assertEqual(r.data["estado"], "ok")

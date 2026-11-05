@@ -1,5 +1,6 @@
 from io import BytesIO
 from decouple import config
+from django.utils import timezone
 from django.core.management.base import BaseCommand, CommandError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import transaction
@@ -160,6 +161,9 @@ class Command(BaseCommand):
                 pdf.showPage()
             pdf.save()
             datos = {
+                "autoriza_publicacion": True,
+                "autorizacion_version": "demo",
+                "autorizacion_en": timezone.now(),
                 "titulo": titulo,
                 "resumen": f"Proyecto demostrativo de informática {i+1}: desarrollo de soluciones para Arica.",
                 "palabras_clave": [

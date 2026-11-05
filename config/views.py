@@ -36,6 +36,7 @@ class Salud(APIView):
         return Response(
             {
                 "estado": "ok",
+                "politica_privacidad_version": settings.POLITICA_PRIVACIDAD_VERSION,
                 "version": version_git() or settings.APP_VERSION or "dev",
                 "debug": settings.DEBUG,
                 "via_proxy": getattr(request, "via_proxy", False),
