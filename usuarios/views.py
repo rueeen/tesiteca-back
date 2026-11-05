@@ -61,10 +61,15 @@ class AutorizadosViewSet(viewsets.ModelViewSet):
             UsuarioAutorizado.objects.select_related("carrera__area", "area", "sede")
             .annotate(
                 estado_cuenta=Subquery(
-                    Usuario.objects.filter(email=OuterRef("email")).values(
+                    Usuario.objects.filter(email__iexact=OuterRef("email")).values(
                         "estado_cuenta"
                     )[:1]
-                )
+                ),
+                usuario_id=Subquery(
+                    Usuario.objects.filter(email__iexact=OuterRef("email")).values(
+                        "id"
+                    )[:1]
+                ),
             )
             .order_by("email")
         )
@@ -114,11 +119,13 @@ class AutorizadosViewSet(viewsets.ModelViewSet):
             raise PermissionDenied()
         serializer.save()
         # La señal puede activar/desactivar la cuenta tras guardar el autorizado.
-        serializer.instance.estado_cuenta = (
-            Usuario.objects.filter(email=serializer.instance.email)
-            .values_list("estado_cuenta", flat=True)
+        cuenta = (
+            Usuario.objects.filter(email__iexact=serializer.instance.email)
+            .values("id", "estado_cuenta")
             .first()
         )
+        serializer.instance.estado_cuenta = cuenta["estado_cuenta"] if cuenta else None
+        serializer.instance.usuario_id = cuenta["id"] if cuenta else None
 
     @action(detail=False, methods=["get"])
     def plantilla(self, request):
